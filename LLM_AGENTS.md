@@ -83,6 +83,255 @@ rpack create --from HEAD~2 --to HEAD -o change.rpack
 
 This does not preserve commits. It packages the resulting diff as a patch.
 
+## Manual Package Creation Without rpack
+
+If `rpack` is not installed in the agent environment, the agent can still create a valid `.rpack` file manually.
+
+Important: the current `rpack-v1` reader expects JSON property names in the same casing used by the .NET model, for example `Format`, `Mode`, `Patches`, `Path`, and `Sha256`. Do not use camelCase property names when creating packages manually.
+
+### Accepted Package Structure
+
+An `.rpack` file is a ZIP archive with this structure:
+
+```txt
+change.rpack
+├─ manifest.json
+├─ patches/
+│  └─ change.patch
+├─ checksums.sha256
+└─ README.md
+```
+
+Only these parts are required by the current reader:
+
+- `manifest.json`
+- `patches/change.patch`
+- the SHA-256 value in `manifest.json`
+
+`checksums.sha256` and `README.md` are recommended for humans and tooling consistency.
+
+### Patch Requirements
+
+The patch must be a Git diff that `git apply` can read:
+
+```bash
+git diff --binary > patches/change.patch
+```
+
+For staged changes:
+
+```bash
+git diff --binary --cached > patches/change.patch
+```
+
+For a revision range:
+
+```bash
+git diff --binary HEAD~2 HEAD > patches/change.patch
+```
+
+The target repository will later validate the patch with:
+
+```bash
+git apply --check <patch>
+```
+
+### Minimal Valid manifest.json
+
+This is the smallest practical manifest that current `rpack` accepts:
+
+```json
+{
+  "Format": "rpack-v1",
+  "Mode": "working-tree-patch",
+  "RequiresCleanTree": true,
+  "Patches": [
+    {
+      "Path": "patches/change.patch",
+      "Kind": "git-diff",
+      "Sha256": "<lowercase-sha256-of-patches/change.patch>"
+    }
+  ]
+}
+```
+
+### Recommended manifest.json
+
+Agents should prefer the fuller form:
+
+```json
+{
+  "Format": "rpack-v1",
+  "Id": "fix-login-validation-001",
+  "Title": "Fix login validation",
+  "Description": "Updates login validation and related tests.",
+  "CreatedAtUtc": "2026-06-06T16:30:00Z",
+  "BaseCommit": "<base-commit-sha-or-empty>",
+  "Source": {
+    "Repository": "<repository-name-or-empty>",
+    "BaseCommit": "<base-commit-sha-or-empty>",
+    "HeadCommit": "<head-commit-sha-or-empty>"
+  },
+  "RequiresCleanTree": true,
+  "Mode": "working-tree-patch",
+  "Patches": [
+    {
+      "Path": "patches/change.patch",
+      "Kind": "git-diff",
+      "Sha256": "<lowercase-sha256-of-patches/change.patch>"
+    }
+  ],
+  "Validation": []
+}
+```
+
+`BaseCommit` and `Source.BaseCommit` are diagnostic by default. A mismatch is a warning unless the user applies with `--strict-base`.
+
+### checksums.sha256
+
+Use the same lowercase SHA-256 as in the manifest:
+
+```txt
+<lowercase-sha256-of-patches/change.patch>  patches/change.patch
+```
+
+The current implementation validates the checksum from `manifest.json`. The `checksums.sha256` file is included for transparency and future tooling.
+
+### Build Manually With PowerShell
+
+From the repository root:
+
+```powershell
+$packageName = "change.rpack"
+$work = Join-Path $env:TEMP ("rpack-manual-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path (Join-Path $work "patches") | Out-Null
+
+$patchPath = Join-Path $work "patches/change.patch"
+git diff --binary --output="$patchPath"
+
+$patchBytes = [IO.File]::ReadAllBytes($patchPath)
+$sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($patchBytes)).ToLowerInvariant()
+$base = (git rev-parse HEAD).Trim()
+$repo = Split-Path -Leaf (git rev-parse --show-toplevel)
+$created = [DateTimeOffset]::UtcNow.ToString("O")
+
+$manifest = @"
+{
+  "Format": "rpack-v1",
+  "Id": "manual-$($created.Replace(':', '').Replace('.', ''))",
+  "Title": "Manual rpack package",
+  "Description": "",
+  "CreatedAtUtc": "$created",
+  "BaseCommit": "$base",
+  "Source": {
+    "Repository": "$repo",
+    "BaseCommit": "$base",
+    "HeadCommit": "$base"
+  },
+  "RequiresCleanTree": true,
+  "Mode": "working-tree-patch",
+  "Patches": [
+    {
+      "Path": "patches/change.patch",
+      "Kind": "git-diff",
+      "Sha256": "$sha"
+    }
+  ],
+  "Validation": []
+}
+"@
+
+Set-Content -Path (Join-Path $work "manifest.json") -Value $manifest -NoNewline
+Set-Content -Path (Join-Path $work "checksums.sha256") -Value "$sha  patches/change.patch"
+Set-Content -Path (Join-Path $work "README.md") -Value "# Manual rpack package"
+
+if (Test-Path $packageName) {
+  Remove-Item $packageName
+}
+
+Compress-Archive -Path (Join-Path $work "*") -DestinationPath $packageName
+```
+
+Then verify:
+
+```powershell
+rpack inspect change.rpack
+rpack check change.rpack
+```
+
+### Build Manually With Bash
+
+From the repository root:
+
+```bash
+package_name="change.rpack"
+work="$(mktemp -d)"
+mkdir -p "$work/patches"
+
+git diff --binary > "$work/patches/change.patch"
+sha="$(sha256sum "$work/patches/change.patch" | awk '{print $1}')"
+base="$(git rev-parse HEAD)"
+repo="$(basename "$(git rev-parse --show-toplevel)")"
+created="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+cat > "$work/manifest.json" <<EOF
+{
+  "Format": "rpack-v1",
+  "Id": "manual-${created}",
+  "Title": "Manual rpack package",
+  "Description": "",
+  "CreatedAtUtc": "${created}",
+  "BaseCommit": "${base}",
+  "Source": {
+    "Repository": "${repo}",
+    "BaseCommit": "${base}",
+    "HeadCommit": "${base}"
+  },
+  "RequiresCleanTree": true,
+  "Mode": "working-tree-patch",
+  "Patches": [
+    {
+      "Path": "patches/change.patch",
+      "Kind": "git-diff",
+      "Sha256": "${sha}"
+    }
+  ],
+  "Validation": []
+}
+EOF
+
+printf "%s  patches/change.patch\n" "$sha" > "$work/checksums.sha256"
+printf "# Manual rpack package\n" > "$work/README.md"
+
+(cd "$work" && zip -r "$OLDPWD/$package_name" manifest.json patches checksums.sha256 README.md)
+```
+
+Then verify:
+
+```bash
+rpack inspect change.rpack
+rpack check change.rpack
+```
+
+### Manual Package Validation Checklist
+
+Before delivering a manually created package, the agent should verify:
+
+```bash
+rpack inspect change.rpack
+rpack check change.rpack
+```
+
+If `rpack` is not available for validation, at least verify:
+
+```bash
+unzip -l change.rpack
+sha256sum patches/change.patch
+git apply --check patches/change.patch
+```
+
+The SHA-256 printed for `patches/change.patch` must exactly match `Patches[0].Sha256` in `manifest.json`.
+
 ## Expected Response To The User
 
 When returning an `.rpack`, the agent should include:

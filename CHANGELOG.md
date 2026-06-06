@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Added `LLM_AGENTS.md` with instructions for coding agents preparing `.rpack` packages.
+- Documented the manual `.rpack` ZIP structure and manifest format for agents that do not have `rpack create` available.
 
 ## [0.1.2] - 2026-06-06
 
