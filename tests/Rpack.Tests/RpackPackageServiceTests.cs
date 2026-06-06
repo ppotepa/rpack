@@ -105,6 +105,91 @@ public class RpackPackageServiceTests
     }
 
     [Fact]
+    public void MultiPatchPackage_AppliesInManifestOrder_AndUndoReversesAllPatches()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+        var patch1 = GitOutput(source, "diff", "--binary");
+        Git(source, "add", "hello.txt");
+        Git(source, "commit", "-m", "hello-two");
+
+        File.WriteAllText(Path.Combine(source, "person.txt"), "Ada");
+        Git(source, "add", "-N", "person.txt");
+        var patch2 = GitOutput(source, "diff", "--binary");
+
+        var packagePath = Path.Combine(workspace.Path, "multi.rpack");
+        WriteManualPackage(packagePath, ("patches/0001-hello.patch", patch1), ("patches/0002-person.patch", patch2));
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+
+        var inspection = service.Inspect(packagePath);
+        var check = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+        var historyAfterApply = service.ReadHistory(target);
+
+        Assert.Equal(2, inspection.ChangedFiles.Count);
+        Assert.True(check.Success, check.Message);
+        Assert.Contains("2 patch", check.Message);
+        Assert.True(apply.Success, apply.Message);
+        Assert.Equal("two", File.ReadAllText(Path.Combine(target, "hello.txt")));
+        Assert.Equal("Ada", File.ReadAllText(Path.Combine(target, "person.txt")));
+        Assert.Single(historyAfterApply);
+        Assert.False(string.IsNullOrWhiteSpace(historyAfterApply[0].PackagePath));
+
+        var undo = service.UndoLastApply(target);
+
+        Assert.True(undo.Success, undo.Message);
+        Assert.Equal("one", File.ReadAllText(Path.Combine(target, "hello.txt")));
+        Assert.False(File.Exists(Path.Combine(target, "person.txt")));
+    }
+
+    [Fact]
+    public void MultiPatchCheck_FailsOnLaterPatch_AndLeavesWorkingTreeUnchanged()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+        var patch1 = GitOutput(source, "diff", "--binary");
+        var badPatch2 = """
+            diff --git a/missing.txt b/missing.txt
+            --- a/missing.txt
+            +++ b/missing.txt
+            @@ -1 +1 @@
+            -old
+            +new
+            """;
+
+        var packagePath = Path.Combine(workspace.Path, "multi-fail.rpack");
+        WriteManualPackage(packagePath, ("patches/0001-hello.patch", patch1), ("patches/0002-bad.patch", badPatch2));
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+
+        var check = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.False(check.Success);
+        Assert.Equal("one", File.ReadAllText(Path.Combine(target, "hello.txt")));
+    }
+
+    [Fact]
     public void Check_FailsWhenChecksumDoesNotMatch()
     {
         using var workspace = new TempWorkspace();
@@ -247,6 +332,13 @@ public class RpackPackageServiceTests
         Assert.True(result.Success, result.CombinedOutput);
     }
 
+    private static string GitOutput(string workingDirectory, params string[] args)
+    {
+        var result = new ProcessRunner().Run("git", args, workingDirectory);
+        Assert.True(result.Success, result.CombinedOutput);
+        return result.StandardOutput;
+    }
+
     private static void CopyDirectory(string source, string target)
     {
         Directory.CreateDirectory(target);
@@ -278,6 +370,61 @@ public class RpackPackageServiceTests
         using var stream = entry.Open();
         using var writer = new StreamWriter(stream);
         writer.Write(content);
+    }
+
+    private static void WriteManualPackage(string packagePath, params (string Path, string Content)[] patches)
+    {
+        using var archive = ZipFile.Open(packagePath, ZipArchiveMode.Create);
+        var patchJson = new List<string>();
+        var checksums = new List<string>();
+
+        foreach (var patch in patches)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(patch.Content);
+            var sha = Sha256.ForBytes(bytes);
+            WriteZipEntry(archive, patch.Path, bytes);
+            checksums.Add($"{sha}  {patch.Path}");
+            patchJson.Add($$"""
+                {
+                  "Path": "{{patch.Path}}",
+                  "Kind": "git-diff",
+                  "Sha256": "{{sha}}"
+                }
+                """);
+        }
+
+        var manifest = $$"""
+            {
+              "Format": "rpack-v1",
+              "Id": "manual-test-package",
+              "Title": "Manual test package",
+              "Description": "",
+              "CreatedAtUtc": "2026-06-06T00:00:00Z",
+              "BaseCommit": "",
+              "RequiresCleanTree": true,
+              "Mode": "working-tree-patch",
+              "Patches": [
+                {{string.Join($",{Environment.NewLine}", patchJson)}}
+              ],
+              "Validation": []
+            }
+            """;
+
+        WriteZipEntry(archive, "manifest.json", manifest);
+        WriteZipEntry(archive, "checksums.sha256", string.Join(Environment.NewLine, checksums));
+        WriteZipEntry(archive, "README.md", "# Manual test package");
+    }
+
+    private static void WriteZipEntry(ZipArchive archive, string entryPath, string content)
+    {
+        WriteZipEntry(archive, entryPath, System.Text.Encoding.UTF8.GetBytes(content));
+    }
+
+    private static void WriteZipEntry(ZipArchive archive, string entryPath, byte[] bytes)
+    {
+        var entry = archive.CreateEntry(entryPath);
+        using var stream = entry.Open();
+        stream.Write(bytes);
     }
 
     private sealed class TempWorkspace : IDisposable

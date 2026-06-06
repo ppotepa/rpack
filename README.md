@@ -27,13 +27,13 @@ The result is still simple: after `rpack apply`, you review the working tree and
 
 ## Current Status
 
-This repository is in early MVP stage. The current format is `rpack-v1` and focuses on one validated Git patch per package.
+This repository is in early MVP stage. The current format is `rpack-v1` and focuses on ordered Git patch packages for working trees.
 
 Implemented:
 
 - `.rpack` as ZIP
 - `manifest.json`
-- one `git diff --binary` patch
+- one or more ordered `git diff --binary` patches
 - `create`, `inspect`, `check`, `apply`, `undo`, `history`
 - checksum verification
 - clean working tree requirement by default
@@ -46,7 +46,6 @@ Implemented:
 Not implemented yet:
 
 - package signing
-- multiple patch files
 - binary file overlay mode
 - NuGet publication
 - GitHub release automation
@@ -83,7 +82,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.2
+.\scripts\build-windows-msi.ps1 -Version 0.1.3
 ```
 
 ## Usage
@@ -93,6 +92,8 @@ Create a package from current unstaged working tree changes:
 ```bash
 rpack create -o change.rpack
 ```
+
+`rpack create` currently emits one aggregate patch entry. Packages created manually or by agents may include multiple ordered patch entries in `Patches`.
 
 Create a package from staged changes:
 
@@ -193,36 +194,46 @@ The MVP stores `.rpack` files as ZIP archives:
 
 ```txt
 manifest.json
-patches/change.patch
+patches/
+  change.patch
 checksums.sha256
 README.md
 ```
+
+Packages may contain multiple patch files. The `Patches` array in `manifest.json`
+is ordered. `rpack` checks and applies patches in that order, and `rpack undo`
+reverses the same patch list in reverse order.
 
 Example manifest:
 
 ```json
 {
-  "format": "rpack-v1",
-  "id": "rpack-20260606154000",
-  "title": "Repository patch package",
-  "description": "",
-  "createdAtUtc": "2026-06-06T15:40:00Z",
-  "baseCommit": "abc123",
-  "source": {
-    "repository": "example",
-    "baseCommit": "abc123",
-    "headCommit": "abc123"
+  "Format": "rpack-v1",
+  "Id": "rpack-20260606154000",
+  "Title": "Repository patch package",
+  "Description": "",
+  "CreatedAtUtc": "2026-06-06T15:40:00Z",
+  "BaseCommit": "abc123",
+  "Source": {
+    "Repository": "example",
+    "BaseCommit": "abc123",
+    "HeadCommit": "abc123"
   },
-  "requiresCleanTree": true,
-  "mode": "working-tree-patch",
-  "patches": [
+  "RequiresCleanTree": true,
+  "Mode": "working-tree-patch",
+  "Patches": [
     {
-      "path": "patches/change.patch",
-      "kind": "git-diff",
-      "sha256": "..."
+      "Path": "patches/0001-core.patch",
+      "Kind": "git-diff",
+      "Sha256": "..."
+    },
+    {
+      "Path": "patches/0002-tests.patch",
+      "Kind": "git-diff",
+      "Sha256": "..."
     }
   ],
-  "validation": []
+  "Validation": []
 }
 ```
 
@@ -235,11 +246,13 @@ Because `rpack` is intended to be installed and run from `PATH`, state is stored
 ├─ apply-log.json
 └─ applied/
    └─ <apply-id>/
-      ├─ change.patch
+      ├─ patches/
+      │  ├─ 0001-core.patch
+      │  └─ 0002-tests.patch
       └─ manifest.json
 ```
 
-`rpack undo` uses the stored patch and runs `git apply --reverse --check` before reverting it.
+`rpack undo` uses the stored manifest and patch files. It runs `git apply --reverse --check` for each patch before reverting them in reverse order.
 
 ## Development
 

@@ -24,7 +24,6 @@ This roadmap is intentionally short. `rpack` should stay focused: validated patc
 
 ## 0.4.x - Package Capabilities
 
-- Support multiple patch entries in one package.
 - Add optional package validation commands.
 - Add package-level notes for manual application.
 - Consider file overlay mode for explicit full-file replacement.

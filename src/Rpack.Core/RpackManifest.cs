@@ -48,6 +48,7 @@ public sealed class RpackApplyLog
     public string BaseCommit { get; init; } = "";
     public string TargetHeadAtApply { get; init; } = "";
     public string PatchPath { get; init; } = "";
+    public string PackagePath { get; init; } = "";
 }
 
 [JsonSerializable(typeof(RpackManifest))]

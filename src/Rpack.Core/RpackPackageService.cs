@@ -115,9 +115,9 @@ public sealed class RpackPackageService
     {
         using var archive = ZipFile.OpenRead(packagePath);
         var manifest = ReadManifest(archive);
-        var changedFiles = manifest.Patches.Count == 0
-            ? []
-            : AnalyzePatch(ReadEntryText(archive, manifest.Patches[0].Path));
+        var changedFiles = manifest.Patches
+            .SelectMany(patch => AnalyzePatch(ReadEntryText(archive, patch.Path)))
+            .ToArray();
 
         return new PackageInspection
         {
@@ -159,8 +159,7 @@ public sealed class RpackPackageService
             return RpackResult.Fail(baseWarning);
         }
 
-        using var tempPatch = ExtractPatchToTempFile(archive, manifest.Patches[0]);
-        var applyCheck = _gitClient.CheckApply(repository.RootPath, tempPatch.Path);
+        var applyCheck = CheckPatchesInOrder(archive, manifest, repository.RootPath);
         if (!applyCheck.Success)
         {
             return applyCheck;
@@ -189,16 +188,26 @@ public sealed class RpackPackageService
         using var archive = ZipFile.OpenRead(options.PackagePath);
         var manifest = ReadManifest(archive);
         var repository = _gitClient.InspectRepository(options.RepositoryPath);
-        using var tempPatch = ExtractPatchToTempFile(archive, manifest.Patches[0]);
-
-        var apply = _gitClient.Apply(repository.RootPath, tempPatch.Path);
-        if (!apply.Success)
+        using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches);
+        var appliedPatches = new List<string>();
+        foreach (var patch in tempPatchSet.Patches)
         {
-            return apply;
+            var apply = _gitClient.Apply(repository.RootPath, patch.TempPath);
+            if (!apply.Success)
+            {
+                foreach (var appliedPatch in appliedPatches.AsEnumerable().Reverse())
+                {
+                    _gitClient.ReverseApply(repository.RootPath, appliedPatch);
+                }
+
+                return apply;
+            }
+
+            appliedPatches.Add(patch.TempPath);
         }
 
         var applyId = CreateApplyId();
-        var storedPatchPath = StoreAppliedPatch(repository, applyId, manifest, tempPatch.Path);
+        var storedPackagePath = StoreAppliedPackage(repository, applyId, manifest, tempPatchSet.Patches);
         AppendApplyLog(repository, new RpackApplyLog
         {
             ApplyId = applyId,
@@ -207,7 +216,8 @@ public sealed class RpackPackageService
             AppliedAtUtc = DateTimeOffset.UtcNow.ToString("O"),
             BaseCommit = GetManifestBaseCommit(manifest),
             TargetHeadAtApply = _gitClient.ResolveCommit(repository.RootPath, "HEAD"),
-            PatchPath = storedPatchPath
+            PatchPath = tempPatchSet.Patches.Count == 1 ? $"{storedPackagePath}/{tempPatchSet.Patches[0].ManifestPath}" : "",
+            PackagePath = storedPackagePath
         });
 
         return RpackResult.Ok($"Package applied. Apply id: {applyId}");
@@ -225,31 +235,45 @@ public sealed class RpackPackageService
         }
 
         var log = logs[index];
-        var patchPath = ResolveStatePath(repository, log.PatchPath);
-        if (!File.Exists(patchPath))
+        var storedPackage = ReadStoredPackage(repository, log);
+        if (!storedPackage.Exists)
         {
-            return RpackResult.Fail($"Stored patch is missing: {log.PatchPath}");
+            return RpackResult.Fail(storedPackage.ErrorMessage);
         }
 
         if (!allowDirty)
         {
-            var dirtyCheck = EnsureNoChangesOutsidePatch(repository.RootPath, patchPath);
+            var dirtyCheck = EnsureNoChangesOutsidePatches(repository.RootPath, storedPackage.PatchPaths);
             if (!dirtyCheck.Success)
             {
                 return dirtyCheck;
             }
         }
 
-        var check = _gitClient.CheckReverseApply(repository.RootPath, patchPath);
-        if (!check.Success)
+        foreach (var patchPath in storedPackage.PatchPaths.AsEnumerable().Reverse())
         {
-            return check;
+            var check = _gitClient.CheckReverseApply(repository.RootPath, patchPath);
+            if (!check.Success)
+            {
+                return check;
+            }
         }
 
-        var undo = _gitClient.ReverseApply(repository.RootPath, patchPath);
-        if (!undo.Success)
+        var reversedPatches = new List<string>();
+        foreach (var patchPath in storedPackage.PatchPaths.AsEnumerable().Reverse())
         {
-            return undo;
+            var undo = _gitClient.ReverseApply(repository.RootPath, patchPath);
+            if (!undo.Success)
+            {
+                foreach (var reversedPatch in reversedPatches.AsEnumerable().Reverse())
+                {
+                    _gitClient.Apply(repository.RootPath, reversedPatch);
+                }
+
+                return undo;
+            }
+
+            reversedPatches.Add(patchPath);
         }
 
         logs[index] = new RpackApplyLog
@@ -261,7 +285,8 @@ public sealed class RpackPackageService
             UndoneAtUtc = DateTimeOffset.UtcNow.ToString("O"),
             BaseCommit = log.BaseCommit,
             TargetHeadAtApply = log.TargetHeadAtApply,
-            PatchPath = log.PatchPath
+            PatchPath = log.PatchPath,
+            PackagePath = log.PackagePath
         };
         WriteApplyLogs(repository, logs);
 
@@ -294,14 +319,22 @@ public sealed class RpackPackageService
             return RpackResult.Fail($"Unsupported package mode: {manifest.Mode}");
         }
 
-        if (manifest.Patches.Count != 1)
+        if (manifest.Patches.Count < 1)
         {
-            return RpackResult.Fail("Packages must contain exactly one patch in rpack-v1.");
+            return RpackResult.Fail("Packages must contain at least one patch in rpack-v1.");
         }
 
-        if (string.IsNullOrWhiteSpace(manifest.Patches[0].Path) || string.IsNullOrWhiteSpace(manifest.Patches[0].Sha256))
+        foreach (var patch in manifest.Patches)
         {
-            return RpackResult.Fail("Patch path or checksum is missing.");
+            if (string.IsNullOrWhiteSpace(patch.Path) || string.IsNullOrWhiteSpace(patch.Sha256))
+            {
+                return RpackResult.Fail("Patch path or checksum is missing.");
+            }
+
+            if (patch.Kind != "git-diff")
+            {
+                return RpackResult.Fail($"Unsupported patch kind: {patch.Kind}");
+            }
         }
 
         return RpackResult.Ok("Manifest is valid.");
@@ -359,17 +392,77 @@ public sealed class RpackPackageService
             : manifest.BaseCommit;
     }
 
-    private static TempFile ExtractPatchToTempFile(ZipArchive archive, RpackPatch patch)
+    private RpackResult CheckPatchesInOrder(ZipArchive archive, RpackManifest manifest, string repositoryPath)
     {
-        var entry = archive.GetEntry(patch.Path) ?? throw new InvalidOperationException($"Patch is missing: {patch.Path}");
-        var tempPath = Path.Combine(Path.GetTempPath(), $"rpack-{Guid.NewGuid():N}.patch");
-        using (var source = entry.Open())
-        using (var destination = File.Create(tempPath))
+        using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches);
+        var appliedPatches = new List<string>();
+
+        foreach (var patch in tempPatchSet.Patches)
         {
-            source.CopyTo(destination);
+            var check = _gitClient.CheckApply(repositoryPath, patch.TempPath);
+            if (!check.Success)
+            {
+                foreach (var appliedPatch in appliedPatches.AsEnumerable().Reverse())
+                {
+                    _gitClient.ReverseApply(repositoryPath, appliedPatch);
+                }
+
+                return check;
+            }
+
+            var apply = _gitClient.Apply(repositoryPath, patch.TempPath);
+            if (!apply.Success)
+            {
+                foreach (var appliedPatch in appliedPatches.AsEnumerable().Reverse())
+                {
+                    _gitClient.ReverseApply(repositoryPath, appliedPatch);
+                }
+
+                return apply;
+            }
+
+            appliedPatches.Add(patch.TempPath);
         }
 
-        return new TempFile(tempPath);
+        foreach (var patchPath in appliedPatches.AsEnumerable().Reverse())
+        {
+            var reverse = _gitClient.ReverseApply(repositoryPath, patchPath);
+            if (!reverse.Success)
+            {
+                return reverse;
+            }
+        }
+
+        return RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied.");
+    }
+
+    private static TempPatchSet ExtractPatchesToTempDirectory(ZipArchive archive, IReadOnlyList<RpackPatch> patches)
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), $"rpack-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+        var tempPatches = new List<TempPatch>();
+
+        foreach (var patch in patches)
+        {
+            if (!IsSafeArchivePath(patch.Path))
+            {
+                throw new InvalidOperationException($"Unsafe archive path: {patch.Path}");
+            }
+
+            var entry = archive.GetEntry(patch.Path) ?? throw new InvalidOperationException($"Patch is missing: {patch.Path}");
+            var tempPath = Path.Combine(tempDirectory, patch.Path.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
+
+            using (var source = entry.Open())
+            using (var destination = File.Create(tempPath))
+            {
+                source.CopyTo(destination);
+            }
+
+            tempPatches.Add(new TempPatch(patch.Path, tempPath));
+        }
+
+        return new TempPatchSet(tempDirectory, tempPatches);
     }
 
     private static bool IsSafeArchivePath(string path)
@@ -480,16 +573,17 @@ public sealed class RpackPackageService
             : path;
     }
 
-    private RpackResult EnsureNoChangesOutsidePatch(string repositoryPath, string patchPath)
+    private RpackResult EnsureNoChangesOutsidePatches(string repositoryPath, IReadOnlyList<string> patchPaths)
     {
-        var patchPaths = AnalyzePatch(File.ReadAllText(patchPath, Encoding.UTF8))
+        var allowedPaths = patchPaths
+            .SelectMany(path => AnalyzePatch(File.ReadAllText(path, Encoding.UTF8)))
             .Select(file => NormalizeGitPath(file.Path))
             .ToHashSet(StringComparer.Ordinal);
         var dirtyPaths = _gitClient.GetChangedPaths(repositoryPath)
             .Select(NormalizeGitPath)
             .ToArray();
         var outsidePaths = dirtyPaths
-            .Where(path => !patchPaths.Contains(path))
+            .Where(path => !allowedPaths.Contains(path))
             .ToArray();
 
         return outsidePaths.Length == 0
@@ -517,19 +611,60 @@ public sealed class RpackPackageService
         stream.Write(content);
     }
 
-    private static string StoreAppliedPatch(GitRepository repository, string applyId, RpackManifest manifest, string patchPath)
+    private static string StoreAppliedPackage(GitRepository repository, string applyId, RpackManifest manifest, IReadOnlyList<TempPatch> patches)
     {
         var relativeDirectory = $"applied/{applyId}";
         var directory = ResolveStatePath(repository, relativeDirectory);
         Directory.CreateDirectory(directory);
 
-        var relativePatchPath = $"{relativeDirectory}/change.patch";
-        File.Copy(patchPath, ResolveStatePath(repository, relativePatchPath), overwrite: true);
+        foreach (var patch in patches)
+        {
+            var relativePatchPath = $"{relativeDirectory}/{patch.ManifestPath}";
+            var destinationPath = ResolveStatePath(repository, relativePatchPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            File.Copy(patch.TempPath, destinationPath, overwrite: true);
+        }
 
         using var manifestFile = File.Create(ResolveStatePath(repository, $"{relativeDirectory}/manifest.json"));
         JsonSerializer.Serialize(manifestFile, manifest, RpackJsonContext.Default.RpackManifest);
 
-        return relativePatchPath;
+        return relativeDirectory;
+    }
+
+    private static StoredPackage ReadStoredPackage(GitRepository repository, RpackApplyLog log)
+    {
+        if (!string.IsNullOrWhiteSpace(log.PackagePath))
+        {
+            var manifestPath = ResolveStatePath(repository, $"{log.PackagePath}/manifest.json");
+            if (!File.Exists(manifestPath))
+            {
+                return StoredPackage.Missing($"Stored manifest is missing: {log.PackagePath}/manifest.json");
+            }
+
+            using var manifestFile = File.OpenRead(manifestPath);
+            var manifest = JsonSerializer.Deserialize(manifestFile, RpackJsonContext.Default.RpackManifest)
+                ?? throw new InvalidOperationException("Stored manifest is invalid.");
+            var patchPaths = manifest.Patches
+                .Select(patch => ResolveStatePath(repository, $"{log.PackagePath}/{patch.Path}"))
+                .ToArray();
+            var missingPatch = patchPaths.FirstOrDefault(path => !File.Exists(path));
+            if (missingPatch is not null)
+            {
+                return StoredPackage.Missing($"Stored patch is missing: {missingPatch}");
+            }
+
+            return new StoredPackage(patchPaths);
+        }
+
+        if (!string.IsNullOrWhiteSpace(log.PatchPath))
+        {
+            var patchPath = ResolveStatePath(repository, log.PatchPath);
+            return File.Exists(patchPath)
+                ? new StoredPackage([patchPath])
+                : StoredPackage.Missing($"Stored patch is missing: {log.PatchPath}");
+        }
+
+        return StoredPackage.Missing("Stored package path is missing from apply log.");
     }
 
     private static List<RpackApplyLog> ReadApplyLogs(GitRepository repository)
@@ -581,23 +716,45 @@ public sealed class RpackPackageService
         public int RemovedLines { get; set; }
     }
 
-    private sealed class TempFile : IDisposable
+    private sealed record TempPatch(string ManifestPath, string TempPath);
+
+    private sealed class TempPatchSet : IDisposable
     {
-        public TempFile(string path)
+        public TempPatchSet(string directoryPath, IReadOnlyList<TempPatch> patches)
         {
-            Path = path;
+            DirectoryPath = directoryPath;
+            Patches = patches;
         }
 
-        public string Path { get; }
+        public string DirectoryPath { get; }
+        public IReadOnlyList<TempPatch> Patches { get; }
 
         public void Dispose()
         {
-            if (File.Exists(Path))
+            if (Directory.Exists(DirectoryPath))
             {
-                File.Delete(Path);
+                Directory.Delete(DirectoryPath, recursive: true);
             }
         }
     }
+
+    private sealed class StoredPackage
+    {
+        public StoredPackage(IReadOnlyList<string> patchPaths)
+        {
+            PatchPaths = patchPaths;
+        }
+
+        public IReadOnlyList<string> PatchPaths { get; }
+        public bool Exists => string.IsNullOrWhiteSpace(ErrorMessage);
+        public string ErrorMessage { get; private init; } = "";
+
+        public static StoredPackage Missing(string errorMessage)
+        {
+            return new StoredPackage([]) { ErrorMessage = errorMessage };
+        }
+    }
+
 }
 
 public sealed class CreatePackageOptions

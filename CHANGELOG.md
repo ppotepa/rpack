@@ -4,10 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-06
+
 ### Added
 
 - Added `LLM_AGENTS.md` with instructions for coding agents preparing `.rpack` packages.
 - Documented the manual `.rpack` ZIP structure and manifest format for agents that do not have `rpack create` available.
+- Added support for multiple ordered patch entries in one `.rpack` package.
+- Added tests for multi-patch apply, check failure rollback, and undo.
+
+### Changed
+
+- `rpack check`, `apply`, `inspect`, and `undo` now process the manifest `Patches` array in order.
+- Stored apply state now preserves the applied manifest and all patch files for undo.
 
 ## [0.1.2] - 2026-06-06
 

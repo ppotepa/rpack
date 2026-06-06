@@ -97,7 +97,9 @@ An `.rpack` file is a ZIP archive with this structure:
 change.rpack
 ├─ manifest.json
 ├─ patches/
-│  └─ change.patch
+│  ├─ 0001-core.patch
+│  ├─ 0002-tests.patch
+│  └─ 0003-docs.patch
 ├─ checksums.sha256
 └─ README.md
 ```
@@ -105,14 +107,14 @@ change.rpack
 Only these parts are required by the current reader:
 
 - `manifest.json`
-- `patches/change.patch`
+- one or more files under `patches/`
 - the SHA-256 value in `manifest.json`
 
 `checksums.sha256` and `README.md` are recommended for humans and tooling consistency.
 
 ### Patch Requirements
 
-The patch must be a Git diff that `git apply` can read:
+Each patch must be a Git diff that `git apply` can read:
 
 ```bash
 git diff --binary > patches/change.patch
@@ -135,6 +137,19 @@ The target repository will later validate the patch with:
 ```bash
 git apply --check <patch>
 ```
+
+For multi-patch packages, the order of the `Patches` array is the application order.
+Do not rely on filename sorting. The manifest is the source of truth:
+
+```json
+"Patches": [
+  { "Path": "patches/0001-core.patch", "Kind": "git-diff", "Sha256": "..." },
+  { "Path": "patches/0002-tests.patch", "Kind": "git-diff", "Sha256": "..." },
+  { "Path": "patches/0003-docs.patch", "Kind": "git-diff", "Sha256": "..." }
+]
+```
+
+`rpack undo` reverses the same list in reverse order.
 
 ### Minimal Valid manifest.json
 
@@ -187,12 +202,16 @@ Agents should prefer the fuller form:
 
 `BaseCommit` and `Source.BaseCommit` are diagnostic by default. A mismatch is a warning unless the user applies with `--strict-base`.
 
+To include multiple patches, add more objects to `Patches` in the exact order they should be applied.
+
 ### checksums.sha256
 
-Use the same lowercase SHA-256 as in the manifest:
+Use the same lowercase SHA-256 values as in the manifest:
 
 ```txt
-<lowercase-sha256-of-patches/change.patch>  patches/change.patch
+<lowercase-sha256-of-patches/0001-core.patch>  patches/0001-core.patch
+<lowercase-sha256-of-patches/0002-tests.patch>  patches/0002-tests.patch
+<lowercase-sha256-of-patches/0003-docs.patch>  patches/0003-docs.patch
 ```
 
 The current implementation validates the checksum from `manifest.json`. The `checksums.sha256` file is included for transparency and future tooling.
@@ -259,6 +278,8 @@ rpack inspect change.rpack
 rpack check change.rpack
 ```
 
+The PowerShell example creates a single-patch package. For a multi-patch package, create more files under `patches/`, compute each SHA-256 separately, and add each patch object to `Patches` in application order.
+
 ### Build Manually With Bash
 
 From the repository root:
@@ -313,6 +334,8 @@ rpack inspect change.rpack
 rpack check change.rpack
 ```
 
+The Bash example creates a single-patch package. For a multi-patch package, create more files under `patches/`, compute each SHA-256 separately, and add each patch object to `Patches` in application order.
+
 ### Manual Package Validation Checklist
 
 Before delivering a manually created package, the agent should verify:
@@ -330,7 +353,7 @@ sha256sum patches/change.patch
 git apply --check patches/change.patch
 ```
 
-The SHA-256 printed for `patches/change.patch` must exactly match `Patches[0].Sha256` in `manifest.json`.
+The SHA-256 printed for every patch file must exactly match the corresponding `Sha256` value in `manifest.json`.
 
 ## Expected Response To The User
 
