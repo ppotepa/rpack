@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added `LLM_AGENTS.md` with instructions for coding agents preparing `.rpack` packages.
+
 ## [0.1.2] - 2026-06-06
 
 ### Added

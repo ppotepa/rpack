@@ -152,6 +152,10 @@ Print the installed version:
 rpack --version
 ```
 
+## LLM Agents
+
+If you want a coding agent such as ChatGPT or Codex to return changes as an `.rpack` file, see [LLM_AGENTS.md](LLM_AGENTS.md).
+
 ## Safety Model
 
 By default, `rpack check` and `rpack apply` require:
