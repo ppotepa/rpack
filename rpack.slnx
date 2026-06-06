@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Rpack.Cli/Rpack.Cli.csproj" />
+    <Project Path="src/Rpack.Core/Rpack.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Rpack.Tests/Rpack.Tests.csproj" />
+  </Folder>
+</Solution>

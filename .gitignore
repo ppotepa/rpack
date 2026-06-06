@@ -1,0 +1,14 @@
+bin/
+obj/
+*.user
+*.suo
+*.rpack
+.vs/
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+*.nupkg
+*.snupkg
+artifacts/
+publish/

@@ -1,0 +1,31 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [0.1.0] - 2026-06-06
+
+Initial MVP.
+
+### Added
+
+- Created .NET 10 solution with `Rpack.Cli`, `Rpack.Core`, and `Rpack.Tests`.
+- Added `.rpack` ZIP package creation.
+- Added `manifest.json` with `rpack-v1` metadata.
+- Added one-patch `working-tree-patch` mode.
+- Added SHA-256 checksum verification.
+- Added `rpack create`.
+- Added `rpack inspect`.
+- Added `rpack check`.
+- Added `rpack apply`.
+- Added `rpack undo`.
+- Added `rpack history`.
+- Added staged patch creation with `rpack create --staged`.
+- Added revision range patch creation with `rpack create --from <rev> --to <rev>`.
+- Added per-repository local state under Git metadata.
+- Added tests for checksuming, patch transfer between repositories, staged patches, and undo.
+
+### Changed
+
+- Source/base commit mismatch is a warning by default.
+- `--strict-base` makes base commit mismatch a blocker.
+- `rpack` applies patches to the working tree and does not modify Git history.
