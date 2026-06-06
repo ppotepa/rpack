@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-06-06
+
+### Added
+
+- Added `--path-prefix` for `inspect`, `check`, and `apply`.
+- Added runtime patch path rewriting for packages built from repository subdirectory snapshots.
+- Added tests for applying snapshot-root-relative package paths to Git-root-relative repositories.
+
+### Changed
+
+- Temporary transformed patches are written as UTF-8 without BOM before `git apply`.
+
 ## [0.1.3] - 2026-06-06
 
 ### Added

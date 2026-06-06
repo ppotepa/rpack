@@ -113,10 +113,19 @@ public sealed class RpackPackageService
 
     public PackageInspection Inspect(string packagePath)
     {
-        using var archive = ZipFile.OpenRead(packagePath);
+        return Inspect(new InspectPackageOptions
+        {
+            PackagePath = packagePath
+        });
+    }
+
+    public PackageInspection Inspect(InspectPackageOptions options)
+    {
+        var pathPrefix = NormalizePathPrefix(options.PathPrefix);
+        using var archive = ZipFile.OpenRead(options.PackagePath);
         var manifest = ReadManifest(archive);
         var changedFiles = manifest.Patches
-            .SelectMany(patch => AnalyzePatch(ReadEntryText(archive, patch.Path)))
+            .SelectMany(patch => AnalyzePatch(RewritePatchPaths(ReadEntryText(archive, patch.Path), pathPrefix)))
             .ToArray();
 
         return new PackageInspection
@@ -129,6 +138,13 @@ public sealed class RpackPackageService
 
     public RpackResult Check(CheckPackageOptions options)
     {
+        var pathPrefixResult = ValidatePathPrefix(options.PathPrefix);
+        if (!pathPrefixResult.Success)
+        {
+            return pathPrefixResult;
+        }
+
+        var pathPrefix = NormalizePathPrefix(options.PathPrefix);
         using var archive = ZipFile.OpenRead(options.PackagePath);
         var manifest = ReadManifest(archive);
         var manifestResult = ValidateManifest(manifest);
@@ -159,7 +175,7 @@ public sealed class RpackPackageService
             return RpackResult.Fail(baseWarning);
         }
 
-        var applyCheck = CheckPatchesInOrder(archive, manifest, repository.RootPath);
+        var applyCheck = CheckPatchesInOrder(archive, manifest, repository.RootPath, pathPrefix);
         if (!applyCheck.Success)
         {
             return applyCheck;
@@ -177,7 +193,8 @@ public sealed class RpackPackageService
             PackagePath = options.PackagePath,
             RepositoryPath = options.RepositoryPath,
             AllowDirty = options.AllowDirty,
-            StrictBase = options.StrictBase
+            StrictBase = options.StrictBase,
+            PathPrefix = options.PathPrefix
         });
 
         if (!check.Success)
@@ -188,7 +205,7 @@ public sealed class RpackPackageService
         using var archive = ZipFile.OpenRead(options.PackagePath);
         var manifest = ReadManifest(archive);
         var repository = _gitClient.InspectRepository(options.RepositoryPath);
-        using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches);
+        using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, NormalizePathPrefix(options.PathPrefix));
         var appliedPatches = new List<string>();
         foreach (var patch in tempPatchSet.Patches)
         {
@@ -392,9 +409,9 @@ public sealed class RpackPackageService
             : manifest.BaseCommit;
     }
 
-    private RpackResult CheckPatchesInOrder(ZipArchive archive, RpackManifest manifest, string repositoryPath)
+    private RpackResult CheckPatchesInOrder(ZipArchive archive, RpackManifest manifest, string repositoryPath, string pathPrefix)
     {
-        using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches);
+        using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, pathPrefix);
         var appliedPatches = new List<string>();
 
         foreach (var patch in tempPatchSet.Patches)
@@ -436,7 +453,7 @@ public sealed class RpackPackageService
         return RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied.");
     }
 
-    private static TempPatchSet ExtractPatchesToTempDirectory(ZipArchive archive, IReadOnlyList<RpackPatch> patches)
+    private static TempPatchSet ExtractPatchesToTempDirectory(ZipArchive archive, IReadOnlyList<RpackPatch> patches, string pathPrefix)
     {
         var tempDirectory = Path.Combine(Path.GetTempPath(), $"rpack-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDirectory);
@@ -454,9 +471,12 @@ public sealed class RpackPackageService
             Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
 
             using (var source = entry.Open())
-            using (var destination = File.Create(tempPath))
+            using (var memory = new MemoryStream())
             {
-                source.CopyTo(destination);
+                source.CopyTo(memory);
+                var patchContent = Encoding.UTF8.GetString(memory.ToArray());
+                var transformedPatch = RewritePatchPaths(patchContent, pathPrefix);
+                File.WriteAllText(tempPath, transformedPatch, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             }
 
             tempPatches.Add(new TempPatch(patch.Path, tempPath));
@@ -571,6 +591,125 @@ public sealed class RpackPackageService
         return path.StartsWith("b/", StringComparison.Ordinal) || path.StartsWith("a/", StringComparison.Ordinal)
             ? path[2..]
             : path;
+    }
+
+    private static RpackResult ValidatePathPrefix(string? pathPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(pathPrefix))
+        {
+            return RpackResult.Ok("Path prefix is valid.");
+        }
+
+        return IsSafeArchivePath(NormalizePathPrefix(pathPrefix))
+            ? RpackResult.Ok("Path prefix is valid.")
+            : RpackResult.Fail($"Unsafe path prefix: {pathPrefix}");
+    }
+
+    private static string NormalizePathPrefix(string? pathPrefix)
+    {
+        return string.IsNullOrWhiteSpace(pathPrefix)
+            ? ""
+            : pathPrefix.Replace('\\', '/').Trim().Trim('/');
+    }
+
+    private static string RewritePatchPaths(string patch, string pathPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(pathPrefix))
+        {
+            return patch;
+        }
+
+        var lines = patch.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            lines[i] = RewritePatchLine(lines[i].TrimEnd('\r'), pathPrefix);
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    private static string RewritePatchLine(string line, string pathPrefix)
+    {
+        if (line.StartsWith("diff --git ", StringComparison.Ordinal))
+        {
+            var parts = line["diff --git ".Length..].Split(' ', 2);
+            return parts.Length == 2
+                ? $"diff --git {PrefixPatchPath(parts[0], pathPrefix)} {PrefixPatchPath(parts[1], pathPrefix)}"
+                : line;
+        }
+
+        if (line.StartsWith("--- ", StringComparison.Ordinal) || line.StartsWith("+++ ", StringComparison.Ordinal))
+        {
+            return $"{line[..4]}{PrefixPatchPath(line[4..], pathPrefix)}";
+        }
+
+        if (line.StartsWith("rename from ", StringComparison.Ordinal))
+        {
+            return $"rename from {PrefixPlainPath(line["rename from ".Length..], pathPrefix)}";
+        }
+
+        if (line.StartsWith("rename to ", StringComparison.Ordinal))
+        {
+            return $"rename to {PrefixPlainPath(line["rename to ".Length..], pathPrefix)}";
+        }
+
+        if (line.StartsWith("copy from ", StringComparison.Ordinal))
+        {
+            return $"copy from {PrefixPlainPath(line["copy from ".Length..], pathPrefix)}";
+        }
+
+        if (line.StartsWith("copy to ", StringComparison.Ordinal))
+        {
+            return $"copy to {PrefixPlainPath(line["copy to ".Length..], pathPrefix)}";
+        }
+
+        if (line.StartsWith("Binary files ", StringComparison.Ordinal))
+        {
+            return RewriteBinaryFilesLine(line, pathPrefix);
+        }
+
+        return line;
+    }
+
+    private static string RewriteBinaryFilesLine(string line, string pathPrefix)
+    {
+        const string prefix = "Binary files ";
+        const string separator = " and ";
+        const string suffix = " differ";
+        if (!line.EndsWith(suffix, StringComparison.Ordinal))
+        {
+            return line;
+        }
+
+        var content = line[prefix.Length..^suffix.Length];
+        var parts = content.Split(separator, 2, StringSplitOptions.None);
+        return parts.Length == 2
+            ? $"{prefix}{PrefixPatchPath(parts[0], pathPrefix)}{separator}{PrefixPatchPath(parts[1], pathPrefix)}{suffix}"
+            : line;
+    }
+
+    private static string PrefixPatchPath(string path, string pathPrefix)
+    {
+        path = path.Trim();
+        if (path == "/dev/null")
+        {
+            return path;
+        }
+
+        if (path.StartsWith("a/", StringComparison.Ordinal) || path.StartsWith("b/", StringComparison.Ordinal))
+        {
+            return $"{path[..2]}{pathPrefix}/{path[2..]}";
+        }
+
+        return PrefixPlainPath(path, pathPrefix);
+    }
+
+    private static string PrefixPlainPath(string path, string pathPrefix)
+    {
+        path = path.Trim();
+        return path == "/dev/null"
+            ? path
+            : $"{pathPrefix}/{path}";
     }
 
     private RpackResult EnsureNoChangesOutsidePatches(string repositoryPath, IReadOnlyList<string> patchPaths)
@@ -775,6 +914,7 @@ public sealed class CheckPackageOptions
     public required string RepositoryPath { get; init; }
     public bool AllowDirty { get; init; }
     public bool StrictBase { get; init; }
+    public string? PathPrefix { get; init; }
 }
 
 public sealed class ApplyPackageOptions
@@ -783,4 +923,11 @@ public sealed class ApplyPackageOptions
     public required string RepositoryPath { get; init; }
     public bool AllowDirty { get; init; }
     public bool StrictBase { get; init; }
+    public string? PathPrefix { get; init; }
+}
+
+public sealed class InspectPackageOptions
+{
+    public required string PackagePath { get; init; }
+    public string? PathPrefix { get; init; }
 }

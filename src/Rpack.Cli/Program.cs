@@ -67,7 +67,11 @@ static int RunInspect(string[] args, RpackPackageService service)
         return Fail("Usage: rpack inspect <package.rpack>");
     }
 
-    var inspection = service.Inspect(options.Positionals[0]);
+    var inspection = service.Inspect(new InspectPackageOptions
+    {
+        PackagePath = options.Positionals[0],
+        PathPrefix = options.Value("--path-prefix")
+    });
     Console.WriteLine($"{inspection.Manifest.Title} ({inspection.Manifest.Id})");
     Console.WriteLine($"format: {inspection.Manifest.Format}");
     Console.WriteLine($"mode: {inspection.Manifest.Mode}");
@@ -109,7 +113,8 @@ static int RunCheck(string[] args, RpackPackageService service)
         PackagePath = options.Positionals[0],
         RepositoryPath = ResolveRepositoryArgument(options),
         AllowDirty = options.Has("--allow-dirty"),
-        StrictBase = options.Has("--strict-base")
+        StrictBase = options.Has("--strict-base"),
+        PathPrefix = options.Value("--path-prefix")
     });
 
     return PrintResult(result);
@@ -128,7 +133,8 @@ static int RunApply(string[] args, RpackPackageService service)
         PackagePath = options.Positionals[0],
         RepositoryPath = ResolveRepositoryArgument(options),
         AllowDirty = options.Has("--allow-dirty"),
-        StrictBase = options.Has("--strict-base")
+        StrictBase = options.Has("--strict-base"),
+        PathPrefix = options.Value("--path-prefix")
     });
 
     return PrintResult(result);
@@ -196,9 +202,9 @@ static void PrintHelp()
       rpack create -o <package.rpack> [--repo <repo>]
       rpack create --staged -o <package.rpack> [--repo <repo>]
       rpack create --from <rev> --to <rev> -o <package.rpack> [--repo <repo>]
-      rpack inspect <package.rpack>
-      rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base]
-      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base]
+      rpack inspect <package.rpack> [--path-prefix <prefix>]
+      rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>]
+      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>]
       rpack undo [repo] [--allow-dirty]
       rpack history [repo]
       rpack --version
@@ -232,7 +238,8 @@ internal sealed class CliOptions
         "--to",
         "--id",
         "--title",
-        "--description"
+        "--description",
+        "--path-prefix"
     };
 
     private readonly Dictionary<string, string?> _values = new(StringComparer.Ordinal);

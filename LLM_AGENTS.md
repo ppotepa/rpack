@@ -24,6 +24,16 @@ rpack check change.rpack
 rpack apply change.rpack
 ```
 
+If the package paths are relative to a snapshot subdirectory rather than the Git
+root, tell the user to apply with `--path-prefix`. Example: if the snapshot root
+was `D:\repo\src` and Git root is `D:\repo`, patch paths like `aot/file.cs`
+need:
+
+```bash
+rpack check change.rpack --path-prefix src
+rpack apply change.rpack --path-prefix src
+```
+
 ## Basic Workflow
 
 From the repository root:
@@ -385,6 +395,18 @@ rpack check change.rpack
 rpack apply change.rpack
 ```
 
+If the package was built from a subdirectory snapshot, prefix the patch paths at
+runtime:
+
+```bash
+rpack inspect change.rpack --path-prefix src
+rpack check change.rpack --path-prefix src
+rpack apply change.rpack --path-prefix src
+```
+
+This keeps the `.rpack` checksum valid. `rpack` verifies the original package
+first, then prefixes temporary patch paths before calling `git apply`.
+
 If the target repo has different Git history but the patch context matches, `rpack check` may pass with a base commit warning. This is expected.
 
 Use strict base matching only when the package must be applied to the exact recorded base commit:
@@ -424,6 +446,10 @@ Agents should prefer:
 - clear package names, for example `camera-refactor.rpack`
 - `--staged` packages when the working tree contains unrelated files
 - short summaries with test results
+- patch paths relative to the Git root whenever possible
+
+When an agent cannot build Git-root-relative paths because it only has a
+subdirectory snapshot, it must clearly state the required `--path-prefix`.
 
 ## Recommended Package Names
 
@@ -467,3 +493,11 @@ rpack check change.rpack --allow-dirty
 If `rpack check` warns about base commit mismatch but still says the patch can be applied, the package is compatible by patch context.
 
 If `rpack check` fails at `git apply --check`, the target repository is not compatible with the patch in its current state.
+
+If `rpack check` fails with "No such file or directory" and the package was
+created from a snapshot root below the Git root, retry with `--path-prefix`.
+For example:
+
+```bash
+rpack check change.rpack --path-prefix src
+```

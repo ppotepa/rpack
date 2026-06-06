@@ -190,6 +190,69 @@ public class RpackPackageServiceTests
     }
 
     [Fact]
+    public void Apply_WithPathPrefix_MapsSnapshotPathsToGitRootPaths()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+
+        Git(source, "init");
+        Git(source, "config", "user.email", "test@example.com");
+        Git(source, "config", "user.name", "Test User");
+        Directory.CreateDirectory(Path.Combine(source, "aot"));
+        File.WriteAllText(Path.Combine(source, "aot", "hello.txt"), "one");
+        Git(source, "add", "aot/hello.txt");
+        Git(source, "commit", "-m", "initial");
+
+        Git(target, "init");
+        Git(target, "config", "user.email", "test@example.com");
+        Git(target, "config", "user.name", "Test User");
+        Directory.CreateDirectory(Path.Combine(target, "src", "aot"));
+        File.WriteAllText(Path.Combine(target, "src", "aot", "hello.txt"), "one");
+        Git(target, "add", "src/aot/hello.txt");
+        Git(target, "commit", "-m", "initial");
+
+        File.WriteAllText(Path.Combine(source, "aot", "hello.txt"), "two");
+        var packagePath = Path.Combine(workspace.Path, "snapshot-root.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var inspection = service.Inspect(new InspectPackageOptions
+        {
+            PackagePath = packagePath,
+            PathPrefix = "src"
+        });
+        var checkWithoutPrefix = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+        var checkWithPrefix = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target,
+            PathPrefix = "src"
+        });
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target,
+            PathPrefix = "src"
+        });
+
+        Assert.True(create.Success, create.Message);
+        Assert.Single(inspection.ChangedFiles);
+        Assert.Equal("src/aot/hello.txt", inspection.ChangedFiles[0].Path);
+        Assert.False(checkWithoutPrefix.Success);
+        Assert.True(checkWithPrefix.Success, checkWithPrefix.Message);
+        Assert.True(apply.Success, apply.Message);
+        Assert.Equal("two", File.ReadAllText(Path.Combine(target, "src", "aot", "hello.txt")));
+    }
+
+    [Fact]
     public void Check_FailsWhenChecksumDoesNotMatch()
     {
         using var workspace = new TempWorkspace();

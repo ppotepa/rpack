@@ -42,6 +42,7 @@ Implemented:
 - patch summary in `inspect`
 - .NET global tool package metadata
 - GitHub Actions CI
+- runtime path prefix mapping for packages built from repository subdirectory snapshots
 
 Not implemented yet:
 
@@ -82,7 +83,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.3
+.\scripts\build-windows-msi.ps1 -Version 0.1.4
 ```
 
 ## Usage
@@ -134,6 +135,17 @@ Check or apply to an explicit repository:
 rpack check change.rpack ./repo
 rpack apply change.rpack ./repo
 ```
+
+Apply a package whose patch paths are relative to a repository subdirectory snapshot:
+
+```bash
+rpack inspect change.rpack --path-prefix src
+rpack check change.rpack ./repo --path-prefix src
+rpack apply change.rpack ./repo --path-prefix src
+```
+
+Use this when a package contains paths such as `aot/project/file.cs`, but the
+real Git-root path is `src/aot/project/file.cs`.
 
 Undo the last applied package:
 
@@ -187,6 +199,9 @@ rpack apply change.rpack --allow-dirty
 ```bash
 rpack undo --allow-dirty
 ```
+
+`--path-prefix` is applied only at check/apply time after package checksum
+verification. It does not modify the `.rpack` file or its manifest.
 
 ## Package Format
 
