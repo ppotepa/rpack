@@ -90,7 +90,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.9
+.\scripts\build-windows-msi.ps1 -Version 0.1.10
 ```
 
 ## Usage
@@ -290,9 +290,14 @@ checks, or package path safety.
 Use `--strict` or `--strict-whitespace` to require exact context whitespace.
 
 When a package tries to add files that already exist in the target repository,
-`rpack check` reports an already-present diagnostic. That usually means the
-package was partially applied earlier or the target repository is already ahead
-of the package.
+`rpack` compares the existing target file with the file content encoded in the
+patch. If the content matches, allowing CRLF/LF differences, rpack safely skips
+that added-file block and applies the remaining patch. If the content differs,
+`rpack check` reports an added-file conflict with target/package byte counts,
+target last-write time, and package creation time.
+
+rpack deliberately does not choose a winner by file size or timestamp. A larger
+or newer file is useful diagnostic information, not a safe overwrite policy.
 
 ## Package Format
 

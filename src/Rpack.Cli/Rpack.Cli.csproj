@@ -9,7 +9,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>rpack</AssemblyName>
     <RootNamespace>Rpack.Cli</RootNamespace>
-    <Version>0.1.9</Version>
+    <Version>0.1.10</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Authors>Pawel Potepa</Authors>
     <Description>Portable, validated patch packages for Git working trees.</Description>

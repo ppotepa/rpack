@@ -545,9 +545,12 @@ context whitespace is required:
 rpack apply change.rpack
 ```
 
-If `rpack check` reports an already-present diagnostic, the target repository
-already contains file(s) the package wants to add. The package may be partially
-applied, or the target repository may already include that feature.
+If `rpack check` reports an added-file conflict, the target repository already
+contains file(s) the package wants to add, but their contents differ from the
+package version. rpack reports target/package byte counts and timestamps for
+diagnosis, but it will not choose a winner by size or modification time. The
+agent should regenerate the package against the current target repository or
+create a new package with only the remaining changes.
 
 If `rpack check` fails with "No such file or directory" and the package was
 created from a snapshot root below the Git root, retry with `--path-prefix`.

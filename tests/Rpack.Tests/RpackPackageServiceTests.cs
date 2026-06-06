@@ -220,7 +220,59 @@ public class RpackPackageServiceTests
 
         Assert.True(create.Success, create.Message);
         Assert.False(check.Success);
-        Assert.Contains("Already-present diagnostic", check.Message);
+        Assert.Contains("Added-file conflict", check.Message);
+        Assert.Contains("target bytes:", check.Message);
+        Assert.Contains("package bytes:", check.Message);
+        Assert.Contains("size comparison:", check.Message);
+    }
+
+    [Fact]
+    public void Apply_SkipsAlreadyPresentAddedFileWhenContentMatches()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        InitializeRepository(target);
+
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+        File.WriteAllText(Path.Combine(source, "new-file.txt"), "same content\n");
+        Git(source, "add", "-N", "new-file.txt");
+
+        File.WriteAllText(Path.Combine(target, "new-file.txt"), "same content\r\n");
+        Git(target, "add", "new-file.txt");
+        Git(target, "commit", "-m", "already-has-file");
+
+        var packagePath = Path.Combine(workspace.Path, "already-present-same.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var check = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.True(create.Success, create.Message);
+        Assert.True(check.Success, check.Message);
+        Assert.Contains("Already-present file(s) skipped", check.Message);
+        Assert.True(apply.Success, apply.Message);
+        Assert.Equal("two", File.ReadAllText(Path.Combine(target, "hello.txt")));
+        Assert.Equal("same content\r\n", File.ReadAllText(Path.Combine(target, "new-file.txt")));
+
+        var undo = service.UndoLastApply(target);
+
+        Assert.True(undo.Success, undo.Message);
+        Assert.Equal("one", File.ReadAllText(Path.Combine(target, "hello.txt")));
+        Assert.Equal("same content\r\n", File.ReadAllText(Path.Combine(target, "new-file.txt")));
     }
 
     [Fact]

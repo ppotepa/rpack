@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-06-07
+
+### Added
+
+- Added added-file comparison when a patch wants to add a file that already exists in the target repository.
+- Added target/package byte count and timestamp diagnostics for differing already-present added files.
+
+### Changed
+
+- Already-present added files with matching content are now skipped safely so the rest of the package can apply.
+- Empty transformed patches are now allowed during apply/check/undo.
+- rpack still refuses to choose between differing files by size or timestamp.
+
 ## [0.1.9] - 2026-06-07
 
 ### Added

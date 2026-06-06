@@ -215,9 +215,13 @@ public sealed class GitClient
 
     public RpackResult CheckApply(string repositoryPath, string patchPath, bool ignoreSpaceChange = false)
     {
-        var args = ignoreSpaceChange
-            ? new[] { "apply", "--check", "--ignore-space-change", patchPath }
-            : ["apply", "--check", patchPath];
+        var args = new List<string> { "apply", "--check", "--allow-empty" };
+        if (ignoreSpaceChange)
+        {
+            args.Add("--ignore-space-change");
+        }
+
+        args.Add(patchPath);
         var result = _processRunner.Run("git", args, repositoryPath);
         return result.Success
             ? RpackResult.Ok("Patch can be applied.")
@@ -226,7 +230,7 @@ public sealed class GitClient
 
     public RpackResult CheckApply(string repositoryPath, IReadOnlyList<string> patchPaths, bool ignoreSpaceChange = false)
     {
-        var args = new List<string> { "apply", "--check" };
+        var args = new List<string> { "apply", "--check", "--allow-empty" };
         if (ignoreSpaceChange)
         {
             args.Add("--ignore-space-change");
@@ -241,9 +245,13 @@ public sealed class GitClient
 
     public RpackResult Apply(string repositoryPath, string patchPath, bool ignoreSpaceChange = false)
     {
-        var args = ignoreSpaceChange
-            ? new[] { "apply", "--ignore-space-change", patchPath }
-            : ["apply", patchPath];
+        var args = new List<string> { "apply", "--allow-empty" };
+        if (ignoreSpaceChange)
+        {
+            args.Add("--ignore-space-change");
+        }
+
+        args.Add(patchPath);
         var result = _processRunner.Run("git", args, repositoryPath);
         return result.Success
             ? RpackResult.Ok("Patch applied.")
@@ -252,9 +260,13 @@ public sealed class GitClient
 
     public RpackResult CheckReverseApply(string repositoryPath, string patchPath, bool ignoreSpaceChange = false)
     {
-        var args = ignoreSpaceChange
-            ? new[] { "apply", "--reverse", "--check", "--ignore-space-change", patchPath }
-            : ["apply", "--reverse", "--check", patchPath];
+        var args = new List<string> { "apply", "--reverse", "--check", "--allow-empty" };
+        if (ignoreSpaceChange)
+        {
+            args.Add("--ignore-space-change");
+        }
+
+        args.Add(patchPath);
         var result = _processRunner.Run("git", args, repositoryPath);
         return result.Success
             ? RpackResult.Ok("Patch can be reverted.")
@@ -263,9 +275,13 @@ public sealed class GitClient
 
     public RpackResult ReverseApply(string repositoryPath, string patchPath, bool ignoreSpaceChange = false)
     {
-        var args = ignoreSpaceChange
-            ? new[] { "apply", "--reverse", "--ignore-space-change", patchPath }
-            : ["apply", "--reverse", patchPath];
+        var args = new List<string> { "apply", "--reverse", "--allow-empty" };
+        if (ignoreSpaceChange)
+        {
+            args.Add("--ignore-space-change");
+        }
+
+        args.Add(patchPath);
         var result = _processRunner.Run("git", args, repositoryPath);
         return result.Success
             ? RpackResult.Ok("Patch reverted.")

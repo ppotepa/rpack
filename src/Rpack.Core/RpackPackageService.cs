@@ -210,6 +210,12 @@ public sealed class RpackPackageService
         var manifest = ReadManifest(archive);
         var repository = _gitClient.InspectRepository(options.RepositoryPath);
         using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, NormalizePathPrefix(options.PathPrefix));
+        var existingAddedFiles = PrepareExistingAddedFiles(repository.RootPath, manifest, tempPatchSet);
+        if (!existingAddedFiles.Success)
+        {
+            return existingAddedFiles;
+        }
+
         var appliedPatches = new List<string>();
         foreach (var patch in tempPatchSet.Patches)
         {
@@ -416,6 +422,12 @@ public sealed class RpackPackageService
     private RpackResult CheckPatchesInOrder(ZipArchive archive, RpackManifest manifest, string repositoryPath, string pathPrefix, bool ignoreSpaceChange)
     {
         using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, pathPrefix);
+        var existingAddedFiles = PrepareExistingAddedFiles(repositoryPath, manifest, tempPatchSet);
+        if (!existingAddedFiles.Success)
+        {
+            return existingAddedFiles;
+        }
+
         var patchPaths = tempPatchSet.Patches.Select(patch => patch.TempPath).ToArray();
         var check = _gitClient.CheckApply(repositoryPath, patchPaths, ignoreSpaceChange);
         if (!check.Success)
@@ -446,9 +458,213 @@ public sealed class RpackPackageService
             return RpackResult.Fail($"Patch dry-run failed for {manifestPatch}:{Environment.NewLine}{check.Message}{diagnosticMessage}");
         }
 
-        return ignoreSpaceChange
+        var message = ignoreSpaceChange
             ? RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied with whitespace-compatible context matching.")
             : RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied.");
+        return existingAddedFiles.Message == "No existing added files."
+            ? message
+            : RpackResult.Ok($"{message.Message}{Environment.NewLine}{existingAddedFiles.Message}");
+    }
+
+    private RpackResult PrepareExistingAddedFiles(string repositoryPath, RpackManifest manifest, TempPatchSet tempPatchSet)
+    {
+        var skipped = new List<string>();
+        var conflicts = new List<string>();
+
+        foreach (var patch in tempPatchSet.Patches)
+        {
+            var patchText = File.ReadAllText(patch.TempPath, Encoding.UTF8);
+            var rewritten = RewriteAlreadyPresentAddedFiles(repositoryPath, manifest, patch.ManifestPath, patchText, skipped, conflicts);
+            if (!string.Equals(rewritten, patchText, StringComparison.Ordinal))
+            {
+                File.WriteAllText(patch.TempPath, rewritten, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            }
+        }
+
+        if (conflicts.Count > 0)
+        {
+            return RpackResult.Fail($"""
+                Added-file conflict: the target repository already contains file(s) this package wants to add, but their contents differ.
+                rpack will not choose by file size or modification time because that could overwrite local work.
+
+                {string.Join(Environment.NewLine + Environment.NewLine, conflicts)}
+
+                Suggested action: regenerate the package against the current target repository, or resolve these files manually and create a new package with the remaining changes.
+                """);
+        }
+
+        return skipped.Count == 0
+            ? RpackResult.Ok("No existing added files.")
+            : RpackResult.Ok($"Already-present file(s) skipped because target content matches the package:{Environment.NewLine}- {string.Join(Environment.NewLine + "- ", skipped)}");
+    }
+
+    private static string RewriteAlreadyPresentAddedFiles(
+        string repositoryPath,
+        RpackManifest manifest,
+        string manifestPatchPath,
+        string patchText,
+        List<string> skipped,
+        List<string> conflicts)
+    {
+        var lines = patchText.Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+        var output = new List<string>();
+        var prefix = new List<string>();
+        var block = new List<string>();
+        var hasBlock = false;
+
+        foreach (var line in lines)
+        {
+            if (line.StartsWith("diff --git ", StringComparison.Ordinal))
+            {
+                FlushBlock();
+                hasBlock = true;
+                block.Add(line);
+                continue;
+            }
+
+            if (hasBlock)
+            {
+                block.Add(line);
+            }
+            else
+            {
+                prefix.Add(line);
+            }
+        }
+
+        FlushBlock();
+        return string.Join('\n', output);
+
+        void FlushBlock()
+        {
+            if (!hasBlock)
+            {
+                output.AddRange(prefix);
+                prefix.Clear();
+                return;
+            }
+
+            var addedFile = TryParseAddedTextFile(block);
+            if (addedFile is not null)
+            {
+                var targetPath = ResolveRepositoryFilePath(repositoryPath, addedFile.Path);
+                if (targetPath is null)
+                {
+                    conflicts.Add($"{manifestPatchPath}:{addedFile.Path}{Environment.NewLine}  Unsafe target path.");
+                }
+                else if (File.Exists(targetPath))
+                {
+                    var targetText = File.ReadAllText(targetPath);
+                    if (NormalizeLineEndings(targetText) == NormalizeLineEndings(addedFile.Content))
+                    {
+                        skipped.Add($"{manifestPatchPath}:{addedFile.Path}");
+                        block.Clear();
+                        return;
+                    }
+
+                    conflicts.Add(BuildAddedFileConflict(manifest, manifestPatchPath, addedFile, targetPath));
+                }
+            }
+
+            output.AddRange(block);
+            block.Clear();
+        }
+    }
+
+    private static AddedTextFile? TryParseAddedTextFile(IReadOnlyList<string> block)
+    {
+        if (block.Count == 0
+            || !block.Any(line => line.StartsWith("new file mode ", StringComparison.Ordinal))
+            || !block.Any(line => line == "--- /dev/null")
+            || block.Any(line => line is "GIT binary patch" || line.StartsWith("Binary files ", StringComparison.Ordinal)))
+        {
+            return null;
+        }
+
+        var path = ParseDiffGitPath(block[0]);
+        var lines = new List<string>();
+        var inHunk = false;
+        var finalNewline = false;
+        var lastLineWasAdded = false;
+
+        foreach (var line in block)
+        {
+            if (line.StartsWith("@@ ", StringComparison.Ordinal))
+            {
+                inHunk = true;
+                lastLineWasAdded = false;
+                continue;
+            }
+
+            if (!inHunk)
+            {
+                continue;
+            }
+
+            if (line.StartsWith(@"\ No newline", StringComparison.Ordinal) && lastLineWasAdded)
+            {
+                finalNewline = false;
+                continue;
+            }
+
+            lastLineWasAdded = false;
+            if (line.StartsWith('+') && !line.StartsWith("+++", StringComparison.Ordinal))
+            {
+                lines.Add(line[1..]);
+                finalNewline = true;
+                lastLineWasAdded = true;
+            }
+        }
+
+        var content = lines.Count == 0
+            ? ""
+            : string.Join('\n', lines) + (finalNewline ? "\n" : "");
+        return new AddedTextFile(path, content);
+    }
+
+    private static string BuildAddedFileConflict(RpackManifest manifest, string manifestPatchPath, AddedTextFile addedFile, string targetPath)
+    {
+        var info = new FileInfo(targetPath);
+        var packageBytes = Encoding.UTF8.GetByteCount(addedFile.Content);
+        var sizeRelation = info.Length == packageBytes
+            ? "same size"
+            : info.Length > packageBytes ? "target is larger" : "package is larger";
+        var packageCreated = string.IsNullOrWhiteSpace(manifest.CreatedAtUtc)
+            ? "unknown"
+            : manifest.CreatedAtUtc;
+
+        return $"""
+            {manifestPatchPath}:{addedFile.Path}
+              target bytes: {info.Length}
+              package bytes: {packageBytes}
+              size comparison: {sizeRelation}
+              target last write UTC: {info.LastWriteTimeUtc:O}
+              package created UTC: {packageCreated}
+            """;
+    }
+
+    private static string? ResolveRepositoryFilePath(string repositoryPath, string gitPath)
+    {
+        var normalized = NormalizeGitPath(gitPath);
+        if (!IsSafeArchivePath(normalized))
+        {
+            return null;
+        }
+
+        var repositoryRoot = Path.GetFullPath(repositoryPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullPath = Path.GetFullPath(Path.Combine(repositoryRoot, normalized.Replace('/', Path.DirectorySeparatorChar)));
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return fullPath.StartsWith(repositoryRoot + Path.DirectorySeparatorChar, comparison)
+            ? fullPath
+            : null;
+    }
+
+    private static string NormalizeLineEndings(string value)
+    {
+        return value.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal);
     }
 
     private string FindFirstIndividuallyFailingPatch(string repositoryPath, TempPatchSet tempPatchSet, bool ignoreSpaceChange)
@@ -925,6 +1141,8 @@ public sealed class RpackPackageService
         public int AddedLines { get; set; }
         public int RemovedLines { get; set; }
     }
+
+    private sealed record AddedTextFile(string Path, string Content);
 
     private sealed record TempPatch(string ManifestPath, string TempPath);
 

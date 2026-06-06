@@ -65,13 +65,14 @@ internal static class ErrorFormatter
                 normalized);
         }
 
-        if (normalized.Contains("Already-present diagnostic", StringComparison.OrdinalIgnoreCase)
+        if (normalized.Contains("Added-file conflict", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("Already-present diagnostic", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("already exists in working directory", StringComparison.OrdinalIgnoreCase))
         {
             return new PackageProblem(
-                "Patch files already exist",
+                normalized.Contains("Added-file conflict", StringComparison.OrdinalIgnoreCase) ? "Added-file conflict" : "Patch files already exist",
                 "The target repository already contains file(s) that this package wants to add.",
-                "Check whether the package was already applied or whether the target repository is ahead of the package.",
+                "If the existing file differs, regenerate the package against this repository or resolve the file manually.",
                 normalized);
         }
 
