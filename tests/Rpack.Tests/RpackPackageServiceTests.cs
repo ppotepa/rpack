@@ -191,6 +191,39 @@ public class RpackPackageServiceTests
     }
 
     [Fact]
+    public void Check_DiagnosesAlreadyPresentAddedFiles()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        InitializeRepository(target);
+
+        File.WriteAllText(Path.Combine(source, "new-file.txt"), "from package");
+        Git(source, "add", "-N", "new-file.txt");
+        File.WriteAllText(Path.Combine(target, "new-file.txt"), "already here");
+        Git(target, "add", "new-file.txt");
+        Git(target, "commit", "-m", "already-has-file");
+
+        var packagePath = Path.Combine(workspace.Path, "already-present.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var check = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.True(create.Success, create.Message);
+        Assert.False(check.Success);
+        Assert.Contains("Already-present diagnostic", check.Message);
+    }
+
+    [Fact]
     public void Apply_WithPathPrefix_MapsSnapshotPathsToGitRootPaths()
     {
         using var workspace = new TempWorkspace();
@@ -310,7 +343,7 @@ public class RpackPackageServiceTests
     }
 
     [Fact]
-    public void Check_DiagnosesWhitespaceMismatch_AndCanApplyWhenExplicitlyAllowed()
+    public void Check_UsesWhitespaceCompatibleContextByDefault_AndCanRunStrict()
     {
         using var workspace = new TempWorkspace();
         var source = workspace.CreateDirectory("source");
@@ -332,27 +365,26 @@ public class RpackPackageServiceTests
         {
             PackagePath = packagePath,
             RepositoryPath = target,
-            AllowDirty = true
+            AllowDirty = true,
+            IgnoreSpaceChange = false
         });
-        var whitespaceCheck = service.Check(new CheckPackageOptions
+        var defaultCheck = service.Check(new CheckPackageOptions
         {
             PackagePath = packagePath,
             RepositoryPath = target,
-            AllowDirty = true,
-            IgnoreSpaceChange = true
+            AllowDirty = true
         });
         var apply = service.Apply(new ApplyPackageOptions
         {
             PackagePath = packagePath,
             RepositoryPath = target,
-            AllowDirty = true,
-            IgnoreSpaceChange = true
+            AllowDirty = true
         });
 
         Assert.True(create.Success, create.Message);
         Assert.False(strictCheck.Success);
-        Assert.Contains("--ignore-space-change", strictCheck.Message);
-        Assert.True(whitespaceCheck.Success, whitespaceCheck.Message);
+        Assert.Contains("without --strict", strictCheck.Message);
+        Assert.True(defaultCheck.Success, defaultCheck.Message);
         Assert.True(apply.Success, apply.Message);
         Assert.Equal("line1\n}", File.ReadAllText(Path.Combine(target, "file.txt")).Replace("\r\n", "\n", StringComparison.Ordinal));
     }

@@ -117,7 +117,7 @@ static int RunCheck(string[] args, RpackPackageService service)
         AllowDirty = options.Has("--allow-dirty"),
         StrictBase = options.Has("--strict-base"),
         PathPrefix = options.Value("--path-prefix"),
-        IgnoreSpaceChange = options.Has("--ignore-space-change")
+        IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
     });
 
     return PrintResult(result);
@@ -138,7 +138,7 @@ static int RunApply(string[] args, RpackPackageService service)
         AllowDirty = options.Has("--allow-dirty"),
         StrictBase = options.Has("--strict-base"),
         PathPrefix = options.Value("--path-prefix"),
-        IgnoreSpaceChange = options.Has("--ignore-space-change")
+        IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
     });
 
     return PrintResult(result);
@@ -157,7 +157,7 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
     var allowDirty = options.Has("--allow-dirty");
     var strictBase = options.Has("--strict-base");
     var pathPrefix = options.Value("--path-prefix");
-    var ignoreSpaceChange = options.Has("--ignore-space-change");
+    var ignoreSpaceChange = ResolveIgnoreSpaceChange(options);
     var allowedDirtyPaths = GetPackageDirtyException(repositoryPath, packagePath);
 
     var inspection = service.Inspect(new InspectPackageOptions
@@ -300,7 +300,7 @@ static void PrintOpenSummary(PackageInspection inspection, string repositoryPath
     Console.WriteLine($"addedLines: {inspection.AddedLines}");
     Console.WriteLine($"removedLines: {inspection.RemovedLines}");
     Console.WriteLine($"allowDirty: {allowDirty}");
-    Console.WriteLine($"ignoreSpaceChange: {ignoreSpaceChange}");
+    Console.WriteLine($"patchContext: {(ignoreSpaceChange ? "whitespace-compatible" : "strict")}");
     if (!string.IsNullOrWhiteSpace(pathPrefix))
     {
         Console.WriteLine($"pathPrefix: {pathPrefix}");
@@ -352,9 +352,9 @@ static void PrintHelp()
       rpack create --staged -o <package.rpack> [--repo <repo>]
       rpack create --from <rev> --to <rev> -o <package.rpack> [--repo <repo>]
       rpack inspect <package.rpack> [--path-prefix <prefix>]
-      rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--ignore-space-change]
-      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--ignore-space-change]
-      rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--ignore-space-change] [--yes]
+      rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
+      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
+      rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--yes]
       rpack undo [repo] [--allow-dirty]
       rpack history [repo]
       rpack --version
@@ -368,8 +368,21 @@ static void PrintHelp()
       --allow-dirty          Allow checking or applying into a dirty working tree.
       --strict-base          Fail when the package base commit differs from HEAD.
       --path-prefix <prefix> Prefix patch paths at check/apply time.
-      --ignore-space-change  Let Git ignore whitespace-only context differences.
+      --strict               Require exact patch context whitespace.
+      --strict-whitespace    Alias for --strict.
+      --ignore-space-change  Compatibility no-op; this is the default mode.
     """);
+}
+
+static bool ResolveIgnoreSpaceChange(CliOptions options)
+{
+    var strictWhitespace = options.Has("--strict") || options.Has("--strict-whitespace");
+    if (strictWhitespace && options.Has("--ignore-space-change"))
+    {
+        throw new InvalidOperationException("Use either --strict/--strict-whitespace or --ignore-space-change, not both.");
+    }
+
+    return !strictWhitespace;
 }
 
 static void PrintVersion()

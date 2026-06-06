@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-06-07
+
+### Added
+
+- Added `--strict` and `--strict-whitespace` for exact patch context whitespace matching.
+
+### Changed
+
+- `check`, `apply`, and `open` now use whitespace-compatible patch context matching by default.
+- The Windows launcher now enables `Allow whitespace context match` by default.
+- `--ignore-space-change` is now a compatibility no-op because that mode is the default.
+
 ## [0.1.8] - 2026-06-07
 
 ### Added

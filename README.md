@@ -90,7 +90,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.8
+.\scripts\build-windows-msi.ps1 -Version 0.1.9
 ```
 
 ## Usage
@@ -169,16 +169,21 @@ rpack apply change.rpack ./repo --path-prefix src
 Use this when a package contains paths such as `aot/project/file.cs`, but the
 real Git-root path is `src/aot/project/file.cs`.
 
-If strict patch context fails only because the target file has CRLF/LF,
-whitespace-only context, or final-newline drift, `rpack check` reports that the
-same patch set passes with Git's whitespace context mode. Use it only when that
-drift is intentional:
+By default, `rpack` lets Git ignore whitespace-only differences in patch context
+lines. This makes packages more robust to CRLF/LF and final-newline drift between
+working trees while still applying the actual changed lines from the patch.
+
+Use strict patch context only when exact whitespace context is important:
 
 ```bash
-rpack check change.rpack --ignore-space-change
-rpack apply change.rpack --ignore-space-change
-rpack open change.rpack --ignore-space-change
+rpack check change.rpack --strict
+rpack apply change.rpack --strict
+rpack open change.rpack --strict
 ```
+
+`--strict-whitespace` is accepted as a more explicit alias. The older
+`--ignore-space-change` flag is still accepted for compatibility, but it is now
+the default behavior.
 
 Undo the last applied package:
 
@@ -233,11 +238,8 @@ It does not bypass checksum verification, dry-run apply, or strict base behavior
 when `--strict-base` is used. The context menu also includes an extended
 Shift-right-click action named `Apply with rpack allowing dirty`.
 
-If a package fails strict patch validation but Git can apply it while ignoring
-whitespace-only context differences, the window shows a dedicated whitespace
-diagnostic. The `Allow whitespace context match` checkbox rechecks pending
-packages with the equivalent of `--ignore-space-change` and applies them with
-the same mode.
+The `Allow whitespace context match` checkbox is enabled by default. Uncheck it
+to force strict patch context matching for pending packages.
 
 The batch window stops applying at the first failed package and keeps the raw Git
 or package error available in the details panel for diagnosis.
@@ -255,7 +257,7 @@ By default, `rpack check` and `rpack apply` require:
 - matching SHA-256 checksums
 - safe archive paths
 - clean Git working tree based on real tracked diffs plus untracked files
-- successful `git apply --check`
+- successful `git apply --check` with whitespace-compatible context matching
 
 Source commit mismatch is a warning by default. This is intentional: `rpack` is meant to apply patches to compatible working trees, even when Git history differs.
 
@@ -281,9 +283,16 @@ rpack undo --allow-dirty
 `--path-prefix` is applied only at check/apply time after package checksum
 verification. It does not modify the `.rpack` file or its manifest.
 
-`--ignore-space-change` changes only Git patch context matching. It does not
-skip checksum verification, clean-tree checks, base checks, or package path
-safety. Prefer fixing the target file when the whitespace drift is accidental.
+Default whitespace-compatible context matching changes only Git patch context
+matching. It does not skip checksum verification, clean-tree checks, base
+checks, or package path safety.
+
+Use `--strict` or `--strict-whitespace` to require exact context whitespace.
+
+When a package tries to add files that already exist in the target repository,
+`rpack check` reports an already-present diagnostic. That usually means the
+package was partially applied earlier or the target repository is already ahead
+of the package.
 
 ## Package Format
 

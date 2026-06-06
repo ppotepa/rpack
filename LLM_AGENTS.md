@@ -77,14 +77,13 @@ rpack check change.rpack
 
 Deliver `change.rpack` to the user.
 
-If strict validation fails but rpack says the patch set passes with
-`--ignore-space-change`, explain that the target file has whitespace-only
-context, CRLF/LF, or final-newline drift. Do not silently rely on that mode.
-Tell the user to use it only when that drift is intentional:
+`rpack` uses whitespace-compatible patch context matching by default. This helps
+packages survive CRLF/LF and final-newline drift between working trees. If exact
+context whitespace matters, tell the user to run strict mode:
 
 ```bash
-rpack check change.rpack --ignore-space-change
-rpack apply change.rpack --ignore-space-change
+rpack check change.rpack --strict
+rpack apply change.rpack --strict
 ```
 
 ## Staged-Only Workflow
@@ -444,13 +443,12 @@ first, then prefixes temporary patch paths before calling `git apply`.
 
 If the target repo has different Git history but the patch context matches, `rpack check` may pass with a base commit warning. This is expected.
 
-If `rpack check` reports a whitespace diagnostic, retry with
-`--ignore-space-change` only after confirming the mismatch is limited to
-whitespace context or final-newline drift:
+`rpack check` ignores whitespace-only differences in patch context by default.
+Use strict mode only when the target must match the package context exactly:
 
 ```bash
-rpack check change.rpack --ignore-space-change
-rpack apply change.rpack --ignore-space-change
+rpack check change.rpack --strict
+rpack apply change.rpack --strict
 ```
 
 Use strict base matching only when the package must be applied to the exact recorded base commit:
@@ -538,14 +536,18 @@ If `rpack check` warns about base commit mismatch but still says the patch can b
 
 If `rpack check` fails at `git apply --check`, the target repository is not compatible with the patch in its current state.
 
-If `rpack check` says the patch set passes with `--ignore-space-change`, the
-repository content is close enough for Git when whitespace-only context
-differences are ignored. Prefer regenerating the package or normalizing the
-target file when possible; otherwise apply with:
+If default `rpack check` passes but strict mode fails, the repository content is
+close enough for Git when whitespace-only context differences are ignored. This
+usually means CRLF/LF or final-newline drift. Apply normally unless exact
+context whitespace is required:
 
 ```bash
-rpack apply change.rpack --ignore-space-change
+rpack apply change.rpack
 ```
+
+If `rpack check` reports an already-present diagnostic, the target repository
+already contains file(s) the package wants to add. The package may be partially
+applied, or the target repository may already include that feature.
 
 If `rpack check` fails with "No such file or directory" and the package was
 created from a snapshot root below the Git root, retry with `--path-prefix`.

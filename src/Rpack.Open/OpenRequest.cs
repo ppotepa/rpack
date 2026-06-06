@@ -8,6 +8,7 @@ internal sealed class OpenRequest
     public bool AllowDirty { get; init; }
     public bool StrictBase { get; init; }
     public bool IgnoreSpaceChange { get; init; }
+    public bool StrictWhitespace { get; init; }
     public string DirtyReason { get; init; } = "";
 
     public static OpenRequest FromOptions(OpenOptions options, bool shiftPressed)
@@ -28,6 +29,7 @@ internal sealed class OpenRequest
         var dirtyReason = shiftPressed
             ? "Shift key"
             : options.Has("--allow-dirty") ? "--allow-dirty" : "";
+        var strictWhitespace = options.Has("--strict") || options.Has("--strict-whitespace");
 
         return new OpenRequest
         {
@@ -40,7 +42,8 @@ internal sealed class OpenRequest
             PathPrefix = options.Value("--path-prefix"),
             AllowDirty = allowDirty,
             StrictBase = options.Has("--strict-base"),
-            IgnoreSpaceChange = options.Has("--ignore-space-change"),
+            IgnoreSpaceChange = !strictWhitespace,
+            StrictWhitespace = strictWhitespace,
             DirtyReason = dirtyReason
         };
     }

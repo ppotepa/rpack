@@ -61,7 +61,17 @@ internal static class ErrorFormatter
             return new PackageProblem(
                 "Whitespace mismatch",
                 "Strict patch validation failed, but Git reports that the patch can be applied when whitespace changes in context lines are ignored.",
-                "Fix final-newline/CRLF drift in the target file, or enable Allow whitespace context match / --ignore-space-change if that drift is intentional.",
+                "Fix final-newline/CRLF drift in the target file, or run without strict whitespace mode if that drift is intentional.",
+                normalized);
+        }
+
+        if (normalized.Contains("Already-present diagnostic", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("already exists in working directory", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PackageProblem(
+                "Patch files already exist",
+                "The target repository already contains file(s) that this package wants to add.",
+                "Check whether the package was already applied or whether the target repository is ahead of the package.",
                 normalized);
         }
 
@@ -77,7 +87,7 @@ internal static class ErrorFormatter
                 ignoreSpaceChange ? "Patch failed with whitespace mode" : "Patch dry-run failed",
                 BuildPatchFailureSummary(normalized),
                 ignoreSpaceChange
-                    ? "The patch still does not match even with --ignore-space-change. Check target file contents and package base."
+                    ? "The patch still does not match even with whitespace-compatible context matching. Check target file contents and package base."
                     : "Check that package paths are relative to the Git root. If the package came from a subdirectory snapshot, retry with --path-prefix.",
                 normalized);
         }

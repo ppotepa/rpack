@@ -426,16 +426,28 @@ public sealed class RpackPackageService
                 manifestPatch = FindFirstIndividuallyFailingPatch(repositoryPath, tempPatchSet, ignoreSpaceChange);
             }
 
+            var diagnostics = new List<string>();
+            if (check.Message.Contains("already exists in working directory", StringComparison.OrdinalIgnoreCase))
+            {
+                diagnostics.Add("Already-present diagnostic: the target repository already contains file(s) this patch wants to add. The package may already be partially applied, or the target repository may be ahead of the package.");
+            }
+
             var whitespaceDiagnostic = ignoreSpaceChange
                 ? null
                 : _gitClient.CheckApply(repositoryPath, patchPaths, ignoreSpaceChange: true);
-            return whitespaceDiagnostic?.Success == true
-                ? RpackResult.Fail($"Patch dry-run failed for {manifestPatch}:{Environment.NewLine}{check.Message}{Environment.NewLine}Whitespace diagnostic: this patch set passes with --ignore-space-change. The target file likely has CRLF/LF, whitespace-only context, or final-newline drift. Recheck with --ignore-space-change only if that is intentional.")
-                : RpackResult.Fail($"Patch dry-run failed for {manifestPatch}:{Environment.NewLine}{check.Message}");
+            if (whitespaceDiagnostic?.Success == true)
+            {
+                diagnostics.Add("Whitespace diagnostic: this patch set passes when whitespace-only context differences are ignored. The target file likely has CRLF/LF, whitespace-only context, or final-newline drift. Recheck without --strict only if that is intentional.");
+            }
+
+            var diagnosticMessage = diagnostics.Count == 0
+                ? ""
+                : $"{Environment.NewLine}{string.Join(Environment.NewLine, diagnostics)}";
+            return RpackResult.Fail($"Patch dry-run failed for {manifestPatch}:{Environment.NewLine}{check.Message}{diagnosticMessage}");
         }
 
         return ignoreSpaceChange
-            ? RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied with --ignore-space-change.")
+            ? RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied with whitespace-compatible context matching.")
             : RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied.");
     }
 
@@ -975,7 +987,7 @@ public sealed class CheckPackageOptions
     public bool StrictBase { get; init; }
     public string? PathPrefix { get; init; }
     public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
-    public bool IgnoreSpaceChange { get; init; }
+    public bool IgnoreSpaceChange { get; init; } = true;
 }
 
 public sealed class ApplyPackageOptions
@@ -986,7 +998,7 @@ public sealed class ApplyPackageOptions
     public bool StrictBase { get; init; }
     public string? PathPrefix { get; init; }
     public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
-    public bool IgnoreSpaceChange { get; init; }
+    public bool IgnoreSpaceChange { get; init; } = true;
 }
 
 public sealed class InspectPackageOptions
