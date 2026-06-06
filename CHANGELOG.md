@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-06-06
+
+### Added
+
+- Added single-instance IPC for `rpack-open.exe`, so multiple double-clicked packages are collected into one window.
+- Added a Windows batch UI for inspecting, checking, and applying multiple `.rpack` files.
+- Added per-package status, warning, and error details in the Windows launcher.
+- Added clearer launcher error summaries for invalid packages, dirty trees, checksum failures, repository lookup failures, and patch dry-run failures.
+- Added manifest patch path context to dry-run and apply failures.
+
 ## [0.1.6] - 2026-06-06
 
 ### Added

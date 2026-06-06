@@ -90,7 +90,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.6
+.\scripts\build-windows-msi.ps1 -Version 0.1.7
 ```
 
 ## Usage
@@ -193,14 +193,18 @@ The Windows MSI registers `.rpack` files with `rpack-open.exe` and installs the
 rpack icon for the file association. Both `rpack.exe` and `rpack-open.exe` are
 published with the same embedded icon on Windows builds.
 
-When a package is double-clicked, rpack:
+When one or more packages are double-clicked, rpack opens a single batch window.
+Additional `.rpack` files opened while that window is already running are added
+to the same list instead of opening more windows.
+
+For each package, rpack:
 
 - finds the target Git repository from the package location
 - inspects the package
 - verifies checksums
 - runs `git apply --check`
-- shows a confirmation dialog
-- applies only after explicit confirmation
+- shows status, warnings, and detailed errors in the batch window
+- applies checked ready packages only after explicit confirmation
 
 Normal double-click keeps the default safety model and requires a clean working
 tree. The clicked `.rpack` file itself is ignored for this clean-tree check when
@@ -217,6 +221,9 @@ rpack open change.rpack --allow-dirty
 It does not bypass checksum verification, dry-run apply, or strict base behavior
 when `--strict-base` is used. The context menu also includes an extended
 Shift-right-click action named `Apply with rpack allowing dirty`.
+
+The batch window stops applying at the first failed package and keeps the raw Git
+or package error available in the details panel for diagnosis.
 
 ## LLM Agents
 

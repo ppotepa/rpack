@@ -186,6 +186,7 @@ public class RpackPackageServiceTests
         });
 
         Assert.False(check.Success);
+        Assert.Contains("patches/0002-bad.patch", check.Message);
         Assert.Equal("one", File.ReadAllText(Path.Combine(target, "hello.txt")));
     }
 

@@ -220,7 +220,7 @@ public sealed class RpackPackageService
                     _gitClient.ReverseApply(repository.RootPath, appliedPatch);
                 }
 
-                return apply;
+                return RpackResult.Fail($"Patch apply failed for {patch.ManifestPath}:{Environment.NewLine}{apply.Message}");
             }
 
             appliedPatches.Add(patch.TempPath);
@@ -427,7 +427,7 @@ public sealed class RpackPackageService
                     _gitClient.ReverseApply(repositoryPath, appliedPatch);
                 }
 
-                return check;
+                return RpackResult.Fail($"Patch dry-run failed for {patch.ManifestPath}:{Environment.NewLine}{check.Message}");
             }
 
             var apply = _gitClient.Apply(repositoryPath, patch.TempPath);
@@ -438,7 +438,7 @@ public sealed class RpackPackageService
                     _gitClient.ReverseApply(repositoryPath, appliedPatch);
                 }
 
-                return apply;
+                return RpackResult.Fail($"Patch dry-run apply failed for {patch.ManifestPath}:{Environment.NewLine}{apply.Message}");
             }
 
             appliedPatches.Add(patch.TempPath);
@@ -449,7 +449,7 @@ public sealed class RpackPackageService
             var reverse = _gitClient.ReverseApply(repositoryPath, patchPath);
             if (!reverse.Success)
             {
-                return reverse;
+                return RpackResult.Fail($"Patch dry-run rollback failed for {Path.GetFileName(patchPath)}:{Environment.NewLine}{reverse.Message}");
             }
         }
 

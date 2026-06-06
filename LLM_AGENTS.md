@@ -26,8 +26,9 @@ rpack apply change.rpack
 
 On Windows, if rpack was installed from the MSI, the human can also place the
 `.rpack` file inside the target repository and double-click it. The Windows
-launcher performs inspect, checksum verification, `git apply --check`, and then
-asks for confirmation before applying.
+launcher collects opened packages in one batch window, performs inspect,
+checksum verification, `git apply --check`, and then asks for confirmation before
+applying checked ready packages.
 
 If the package paths are relative to a snapshot subdirectory rather than the Git
 root, tell the user to apply with `--path-prefix`. Example: if the snapshot root
@@ -406,11 +407,11 @@ For an interactive terminal flow:
 rpack open change.rpack
 ```
 
-For the Windows MSI flow, put the `.rpack` file somewhere inside the target Git
-repository and double-click it. Normal double-click requires a clean working
-tree, except for the clicked `.rpack` file itself if it is untracked inside the
-repo. Holding Shift while double-clicking allows a dirty working tree, equivalent
-to:
+For the Windows MSI flow, put one or more `.rpack` files somewhere inside the
+target Git repository and double-click them. rpack collects them in one batch
+window. Normal double-click requires a clean working tree, except for the clicked
+`.rpack` files themselves if they are untracked inside the repo. Holding Shift
+while double-clicking allows a dirty working tree, equivalent to:
 
 ```bash
 rpack open change.rpack --allow-dirty
