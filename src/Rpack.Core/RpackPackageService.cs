@@ -177,7 +177,7 @@ public sealed class RpackPackageService
             return RpackResult.Fail(baseWarning);
         }
 
-        var applyCheck = CheckPatchesInOrder(archive, manifest, repository.RootPath, pathPrefix);
+        var applyCheck = CheckPatchesInOrder(archive, manifest, repository.RootPath, pathPrefix, options.IgnoreSpaceChange);
         if (!applyCheck.Success)
         {
             return applyCheck;
@@ -197,7 +197,8 @@ public sealed class RpackPackageService
             AllowDirty = options.AllowDirty,
             StrictBase = options.StrictBase,
             PathPrefix = options.PathPrefix,
-            AllowedDirtyPaths = options.AllowedDirtyPaths
+            AllowedDirtyPaths = options.AllowedDirtyPaths,
+            IgnoreSpaceChange = options.IgnoreSpaceChange
         });
 
         if (!check.Success)
@@ -212,12 +213,12 @@ public sealed class RpackPackageService
         var appliedPatches = new List<string>();
         foreach (var patch in tempPatchSet.Patches)
         {
-            var apply = _gitClient.Apply(repository.RootPath, patch.TempPath);
+            var apply = _gitClient.Apply(repository.RootPath, patch.TempPath, options.IgnoreSpaceChange);
             if (!apply.Success)
             {
                 foreach (var appliedPatch in appliedPatches.AsEnumerable().Reverse())
                 {
-                    _gitClient.ReverseApply(repository.RootPath, appliedPatch);
+                    _gitClient.ReverseApply(repository.RootPath, appliedPatch, options.IgnoreSpaceChange);
                 }
 
                 return RpackResult.Fail($"Patch apply failed for {patch.ManifestPath}:{Environment.NewLine}{apply.Message}");
@@ -412,48 +413,103 @@ public sealed class RpackPackageService
             : manifest.BaseCommit;
     }
 
-    private RpackResult CheckPatchesInOrder(ZipArchive archive, RpackManifest manifest, string repositoryPath, string pathPrefix)
+    private RpackResult CheckPatchesInOrder(ZipArchive archive, RpackManifest manifest, string repositoryPath, string pathPrefix, bool ignoreSpaceChange)
     {
         using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, pathPrefix);
-        var appliedPatches = new List<string>();
+        var patchPaths = tempPatchSet.Patches.Select(patch => patch.TempPath).ToArray();
+        var check = _gitClient.CheckApply(repositoryPath, patchPaths, ignoreSpaceChange);
+        if (!check.Success)
+        {
+            var manifestPatch = FindManifestPatchForFailure(check.Message, tempPatchSet);
+            if (manifestPatch == "unknown patch")
+            {
+                manifestPatch = FindFirstIndividuallyFailingPatch(repositoryPath, tempPatchSet, ignoreSpaceChange);
+            }
 
+            var whitespaceDiagnostic = ignoreSpaceChange
+                ? null
+                : _gitClient.CheckApply(repositoryPath, patchPaths, ignoreSpaceChange: true);
+            return whitespaceDiagnostic?.Success == true
+                ? RpackResult.Fail($"Patch dry-run failed for {manifestPatch}:{Environment.NewLine}{check.Message}{Environment.NewLine}Whitespace diagnostic: this patch set passes with --ignore-space-change. The target file likely has CRLF/LF, whitespace-only context, or final-newline drift. Recheck with --ignore-space-change only if that is intentional.")
+                : RpackResult.Fail($"Patch dry-run failed for {manifestPatch}:{Environment.NewLine}{check.Message}");
+        }
+
+        return ignoreSpaceChange
+            ? RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied with --ignore-space-change.")
+            : RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied.");
+    }
+
+    private string FindFirstIndividuallyFailingPatch(string repositoryPath, TempPatchSet tempPatchSet, bool ignoreSpaceChange)
+    {
         foreach (var patch in tempPatchSet.Patches)
         {
-            var check = _gitClient.CheckApply(repositoryPath, patch.TempPath);
+            var check = _gitClient.CheckApply(repositoryPath, patch.TempPath, ignoreSpaceChange);
             if (!check.Success)
             {
-                foreach (var appliedPatch in appliedPatches.AsEnumerable().Reverse())
-                {
-                    _gitClient.ReverseApply(repositoryPath, appliedPatch);
-                }
-
-                return RpackResult.Fail($"Patch dry-run failed for {patch.ManifestPath}:{Environment.NewLine}{check.Message}");
+                return patch.ManifestPath;
             }
-
-            var apply = _gitClient.Apply(repositoryPath, patch.TempPath);
-            if (!apply.Success)
-            {
-                foreach (var appliedPatch in appliedPatches.AsEnumerable().Reverse())
-                {
-                    _gitClient.ReverseApply(repositoryPath, appliedPatch);
-                }
-
-                return RpackResult.Fail($"Patch dry-run apply failed for {patch.ManifestPath}:{Environment.NewLine}{apply.Message}");
-            }
-
-            appliedPatches.Add(patch.TempPath);
         }
 
-        foreach (var patchPath in appliedPatches.AsEnumerable().Reverse())
+        return "unknown patch";
+    }
+
+    private static string FindManifestPatchForFailure(string message, TempPatchSet tempPatchSet)
+    {
+        var failedPaths = ExtractGitFailurePaths(message)
+            .Select(NormalizeGitPath)
+            .ToArray();
+        if (failedPaths.Length > 0)
         {
-            var reverse = _gitClient.ReverseApply(repositoryPath, patchPath);
-            if (!reverse.Success)
+            foreach (var failedPath in failedPaths)
             {
-                return RpackResult.Fail($"Patch dry-run rollback failed for {Path.GetFileName(patchPath)}:{Environment.NewLine}{reverse.Message}");
+                foreach (var patch in tempPatchSet.Patches)
+                {
+                    var files = AnalyzePatch(File.ReadAllText(patch.TempPath, Encoding.UTF8));
+                    if (files.Any(file => string.Equals(NormalizeGitPath(file.Path), failedPath, StringComparison.Ordinal)))
+                    {
+                        return patch.ManifestPath;
+                    }
+                }
             }
         }
 
-        return RpackResult.Ok($"All {tempPatchSet.Patches.Count} patch(es) can be applied.");
+        return tempPatchSet.Patches.Count == 1
+            ? tempPatchSet.Patches[0].ManifestPath
+            : "unknown patch";
+    }
+
+    private static IReadOnlyList<string> ExtractGitFailurePaths(string message)
+    {
+        var paths = new List<string>();
+        foreach (var rawLine in message.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            const string patchFailedPrefix = "error: patch failed: ";
+            if (line.StartsWith(patchFailedPrefix, StringComparison.Ordinal))
+            {
+                var content = line[patchFailedPrefix.Length..];
+                var lineNumberSeparator = content.LastIndexOf(':');
+                if (lineNumberSeparator > 0)
+                {
+                    paths.Add(content[..lineNumberSeparator]);
+                }
+
+                continue;
+            }
+
+            const string errorPrefix = "error: ";
+            if (line.StartsWith(errorPrefix, StringComparison.Ordinal))
+            {
+                var content = line[errorPrefix.Length..];
+                var separator = content.IndexOf(':');
+                if (separator > 0)
+                {
+                    paths.Add(content[..separator]);
+                }
+            }
+        }
+
+        return paths;
     }
 
     private static TempPatchSet ExtractPatchesToTempDirectory(ZipArchive archive, IReadOnlyList<RpackPatch> patches, string pathPrefix)
@@ -919,6 +975,7 @@ public sealed class CheckPackageOptions
     public bool StrictBase { get; init; }
     public string? PathPrefix { get; init; }
     public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
+    public bool IgnoreSpaceChange { get; init; }
 }
 
 public sealed class ApplyPackageOptions
@@ -929,6 +986,7 @@ public sealed class ApplyPackageOptions
     public bool StrictBase { get; init; }
     public string? PathPrefix { get; init; }
     public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
+    public bool IgnoreSpaceChange { get; init; }
 }
 
 public sealed class InspectPackageOptions

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-06-07
+
+### Added
+
+- Added `--ignore-space-change` for `check`, `apply`, and `open`.
+- Added a Windows launcher checkbox for applying packages with whitespace context matching.
+- Added whitespace diagnostics when strict patch validation fails but the full patch set passes with `--ignore-space-change`.
+
+### Changed
+
+- `rpack check` now validates all ordered patches in one non-mutating `git apply --check` call.
+- Clean-tree detection now refreshes the Git index and checks real tracked diffs plus untracked files, avoiding false dirty-tree blockers from index stat drift.
+- Multi-patch dry-run failures now try to report the manifest patch that owns the failing file.
+
 ## [0.1.7] - 2026-06-06
 
 ### Added

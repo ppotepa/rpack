@@ -310,6 +310,54 @@ public class RpackPackageServiceTests
     }
 
     [Fact]
+    public void Check_DiagnosesWhitespaceMismatch_AndCanApplyWhenExplicitlyAllowed()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeTextRepository(source, "line1\nline2\n}\n");
+        InitializeTextRepository(target, "line1\nline2\n}\n");
+
+        WriteUtf8(Path.Combine(source, "file.txt"), "line1\n}\n");
+        WriteUtf8(Path.Combine(target, "file.txt"), "line1\nline2\n}");
+
+        var packagePath = Path.Combine(workspace.Path, "whitespace.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var strictCheck = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target,
+            AllowDirty = true
+        });
+        var whitespaceCheck = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target,
+            AllowDirty = true,
+            IgnoreSpaceChange = true
+        });
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target,
+            AllowDirty = true,
+            IgnoreSpaceChange = true
+        });
+
+        Assert.True(create.Success, create.Message);
+        Assert.False(strictCheck.Success);
+        Assert.Contains("--ignore-space-change", strictCheck.Message);
+        Assert.True(whitespaceCheck.Success, whitespaceCheck.Message);
+        Assert.True(apply.Success, apply.Message);
+        Assert.Equal("line1\n}", File.ReadAllText(Path.Combine(target, "file.txt")).Replace("\r\n", "\n", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Check_FailsWhenChecksumDoesNotMatch()
     {
         using var workspace = new TempWorkspace();
@@ -444,6 +492,21 @@ public class RpackPackageServiceTests
         File.WriteAllText(Path.Combine(path, "hello.txt"), "one");
         Git(path, "add", "hello.txt");
         Git(path, "commit", "-m", "initial");
+    }
+
+    private static void InitializeTextRepository(string path, string content)
+    {
+        Git(path, "init");
+        Git(path, "config", "user.email", "test@example.com");
+        Git(path, "config", "user.name", "Test User");
+        WriteUtf8(Path.Combine(path, "file.txt"), content);
+        Git(path, "add", "file.txt");
+        Git(path, "commit", "-m", "initial");
+    }
+
+    private static void WriteUtf8(string path, string content)
+    {
+        File.WriteAllText(path, content, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private static void Git(string workingDirectory, params string[] args)

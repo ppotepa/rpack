@@ -64,15 +64,16 @@ public sealed class GitClient
 
     public RpackResult EnsureCleanWorkingTree(string repositoryPath)
     {
-        var result = _processRunner.Run("git", ["status", "--porcelain", "--untracked-files=all"], repositoryPath);
-        if (!result.Success)
+        try
         {
-            return RpackResult.Fail(result.CombinedOutput);
+            return GetChangedPaths(repositoryPath).Count == 0
+                ? RpackResult.Ok("Working tree is clean.")
+                : RpackResult.Fail("Working tree is not clean.");
         }
-
-        return string.IsNullOrWhiteSpace(result.StandardOutput)
-            ? RpackResult.Ok("Working tree is clean.")
-            : RpackResult.Fail("Working tree is not clean.");
+        catch (InvalidOperationException ex)
+        {
+            return RpackResult.Fail(ex.Message);
+        }
     }
 
     public RpackResult EnsureCleanWorkingTreeExcept(string repositoryPath, IReadOnlyList<string> allowedPaths)
@@ -92,19 +93,50 @@ public sealed class GitClient
 
     public IReadOnlyList<string> GetChangedPaths(string repositoryPath)
     {
-        var result = _processRunner.Run("git", ["status", "--porcelain", "--untracked-files=all"], repositoryPath);
+        RefreshIndex(repositoryPath);
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        AddDiffPaths(repositoryPath, ["diff", "--name-only"], paths);
+        AddDiffPaths(repositoryPath, ["diff", "--cached", "--name-only"], paths);
+
+        var status = _processRunner.Run("git", ["status", "--porcelain", "--untracked-files=all"], repositoryPath);
+        if (!status.Success)
+        {
+            throw new InvalidOperationException(status.CombinedOutput);
+        }
+
+        foreach (var path in status.StandardOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r'))
+            .Where(line => line.StartsWith("?? ", StringComparison.Ordinal))
+            .Select(ParseStatusPath)
+            .Where(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            paths.Add(path);
+        }
+
+        return paths.ToArray();
+    }
+
+    private void AddDiffPaths(string repositoryPath, string[] args, HashSet<string> paths)
+    {
+        var result = _processRunner.Run("git", args, repositoryPath);
         if (!result.Success)
         {
             throw new InvalidOperationException(result.CombinedOutput);
         }
 
-        return result.StandardOutput
+        foreach (var path in result.StandardOutput
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.TrimEnd('\r'))
-            .Select(ParseStatusPath)
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+            .Select(line => line.TrimEnd('\r').Trim())
+            .Where(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            paths.Add(path);
+        }
+    }
+
+    private void RefreshIndex(string repositoryPath)
+    {
+        _processRunner.Run("git", ["update-index", "-q", "--refresh"], repositoryPath);
     }
 
     private static string ParseStatusPath(string statusLine)
@@ -181,33 +213,60 @@ public sealed class GitClient
         return result.StandardOutput;
     }
 
-    public RpackResult CheckApply(string repositoryPath, string patchPath)
+    public RpackResult CheckApply(string repositoryPath, string patchPath, bool ignoreSpaceChange = false)
     {
-        var result = _processRunner.Run("git", ["apply", "--check", patchPath], repositoryPath);
+        var args = ignoreSpaceChange
+            ? new[] { "apply", "--check", "--ignore-space-change", patchPath }
+            : ["apply", "--check", patchPath];
+        var result = _processRunner.Run("git", args, repositoryPath);
         return result.Success
             ? RpackResult.Ok("Patch can be applied.")
             : RpackResult.Fail(result.CombinedOutput);
     }
 
-    public RpackResult Apply(string repositoryPath, string patchPath)
+    public RpackResult CheckApply(string repositoryPath, IReadOnlyList<string> patchPaths, bool ignoreSpaceChange = false)
     {
-        var result = _processRunner.Run("git", ["apply", patchPath], repositoryPath);
+        var args = new List<string> { "apply", "--check" };
+        if (ignoreSpaceChange)
+        {
+            args.Add("--ignore-space-change");
+        }
+
+        args.AddRange(patchPaths);
+        var result = _processRunner.Run("git", args, repositoryPath);
+        return result.Success
+            ? RpackResult.Ok("Patch set can be applied.")
+            : RpackResult.Fail(result.CombinedOutput);
+    }
+
+    public RpackResult Apply(string repositoryPath, string patchPath, bool ignoreSpaceChange = false)
+    {
+        var args = ignoreSpaceChange
+            ? new[] { "apply", "--ignore-space-change", patchPath }
+            : ["apply", patchPath];
+        var result = _processRunner.Run("git", args, repositoryPath);
         return result.Success
             ? RpackResult.Ok("Patch applied.")
             : RpackResult.Fail(result.CombinedOutput);
     }
 
-    public RpackResult CheckReverseApply(string repositoryPath, string patchPath)
+    public RpackResult CheckReverseApply(string repositoryPath, string patchPath, bool ignoreSpaceChange = false)
     {
-        var result = _processRunner.Run("git", ["apply", "--reverse", "--check", patchPath], repositoryPath);
+        var args = ignoreSpaceChange
+            ? new[] { "apply", "--reverse", "--check", "--ignore-space-change", patchPath }
+            : ["apply", "--reverse", "--check", patchPath];
+        var result = _processRunner.Run("git", args, repositoryPath);
         return result.Success
             ? RpackResult.Ok("Patch can be reverted.")
             : RpackResult.Fail(result.CombinedOutput);
     }
 
-    public RpackResult ReverseApply(string repositoryPath, string patchPath)
+    public RpackResult ReverseApply(string repositoryPath, string patchPath, bool ignoreSpaceChange = false)
     {
-        var result = _processRunner.Run("git", ["apply", "--reverse", patchPath], repositoryPath);
+        var args = ignoreSpaceChange
+            ? new[] { "apply", "--reverse", "--ignore-space-change", patchPath }
+            : ["apply", "--reverse", patchPath];
+        var result = _processRunner.Run("git", args, repositoryPath);
         return result.Success
             ? RpackResult.Ok("Patch reverted.")
             : RpackResult.Fail(result.CombinedOutput);

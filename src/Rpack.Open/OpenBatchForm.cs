@@ -16,6 +16,7 @@ internal sealed class OpenBatchForm : Form
     private readonly Button _applyButton = new();
     private readonly Button _removeButton = new();
     private readonly Button _copyButton = new();
+    private readonly CheckBox _ignoreSpaceChangeBox = new();
     private readonly System.Windows.Forms.Timer _checkTimer = new();
     private bool _checking;
 
@@ -56,6 +57,7 @@ internal sealed class OpenBatchForm : Form
                 existing.RepositoryOption = request.RepositoryPath ?? existing.RepositoryOption;
                 existing.PathPrefix = request.PathPrefix ?? existing.PathPrefix;
                 existing.StrictBase = existing.StrictBase || request.StrictBase;
+                existing.IgnoreSpaceChange = existing.IgnoreSpaceChange || request.IgnoreSpaceChange || _ignoreSpaceChangeBox.Checked;
                 if (existing.State is PackageState.Error)
                 {
                     existing.State = PackageState.Pending;
@@ -71,10 +73,12 @@ internal sealed class OpenBatchForm : Form
                 PathPrefix = request.PathPrefix,
                 AllowDirty = request.AllowDirty,
                 DirtyReason = request.DirtyReason,
-                StrictBase = request.StrictBase
+                StrictBase = request.StrictBase,
+                IgnoreSpaceChange = request.IgnoreSpaceChange || _ignoreSpaceChangeBox.Checked
             });
         }
 
+        _ignoreSpaceChangeBox.Checked = _jobs.Any(job => job.IgnoreSpaceChange);
         RefreshList();
         BringToFront();
         Activate();
@@ -129,6 +133,22 @@ internal sealed class OpenBatchForm : Form
         _details.WordWrap = false;
         _details.Font = new Font(FontFamily.GenericMonospace, 9);
 
+        _ignoreSpaceChangeBox.Text = "Allow whitespace context match";
+        _ignoreSpaceChangeBox.AutoSize = true;
+        _ignoreSpaceChangeBox.Height = 30;
+        _ignoreSpaceChangeBox.TextAlign = ContentAlignment.MiddleCenter;
+        _ignoreSpaceChangeBox.CheckedChanged += async (_, _) =>
+        {
+            foreach (var job in _jobs.Where(job => job.State != PackageState.Applied))
+            {
+                job.IgnoreSpaceChange = _ignoreSpaceChangeBox.Checked;
+                job.ResetForCheck();
+            }
+
+            RefreshList();
+            await CheckPendingAsync();
+        };
+
         var buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -179,6 +199,7 @@ internal sealed class OpenBatchForm : Form
         buttons.Controls.Add(_recheckButton);
         buttons.Controls.Add(_removeButton);
         buttons.Controls.Add(_copyButton);
+        buttons.Controls.Add(_ignoreSpaceChangeBox);
 
         root.Controls.Add(_summary, 0, 0);
         root.Controls.Add(_list, 0, 1);
@@ -258,13 +279,14 @@ internal sealed class OpenBatchForm : Form
                 AllowDirty = job.AllowDirty,
                 StrictBase = job.StrictBase,
                 PathPrefix = job.PathPrefix,
-                AllowedDirtyPaths = allowedDirtyPaths
+                AllowedDirtyPaths = allowedDirtyPaths,
+                IgnoreSpaceChange = job.IgnoreSpaceChange
             });
 
             job.Inspection = inspection;
             if (!check.Success)
             {
-                job.Fail("Check", ErrorFormatter.FromCheckFailure(check.Message, job.AllowDirty));
+                job.Fail("Check", ErrorFormatter.FromCheckFailure(check.Message, job.AllowDirty, job.IgnoreSpaceChange));
                 return;
             }
 
@@ -299,11 +321,12 @@ internal sealed class OpenBatchForm : Form
 
         var warningCount = candidates.Count(job => job.State == PackageState.Warning);
         var dirtyCount = candidates.Count(job => job.AllowDirty);
+        var whitespaceCount = candidates.Count(job => job.IgnoreSpaceChange);
         var answer = MessageBox.Show(
-            $"Apply {candidates.Length} package(s)?{Environment.NewLine}{Environment.NewLine}Warnings: {warningCount}{Environment.NewLine}Dirty-tree mode: {dirtyCount}",
+            $"Apply {candidates.Length} package(s)?{Environment.NewLine}{Environment.NewLine}Warnings: {warningCount}{Environment.NewLine}Dirty-tree mode: {dirtyCount}{Environment.NewLine}Whitespace context mode: {whitespaceCount}",
             "Apply selected rpack packages",
             MessageBoxButtons.YesNo,
-            warningCount > 0 || dirtyCount > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Question,
+            warningCount > 0 || dirtyCount > 0 || whitespaceCount > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Question,
             MessageBoxDefaultButton.Button2);
         if (answer != DialogResult.Yes)
         {
@@ -358,12 +381,13 @@ internal sealed class OpenBatchForm : Form
                 AllowDirty = job.AllowDirty,
                 StrictBase = job.StrictBase,
                 PathPrefix = job.PathPrefix,
-                AllowedDirtyPaths = GetPackageDirtyException(job.RepositoryPath, job.PackagePath)
+                AllowedDirtyPaths = GetPackageDirtyException(job.RepositoryPath, job.PackagePath),
+                IgnoreSpaceChange = job.IgnoreSpaceChange
             });
 
             if (!apply.Success)
             {
-                job.Fail("Apply", ErrorFormatter.FromCheckFailure(apply.Message, job.AllowDirty));
+                job.Fail("Apply", ErrorFormatter.FromCheckFailure(apply.Message, job.AllowDirty, job.IgnoreSpaceChange));
                 return;
             }
 
@@ -451,7 +475,7 @@ internal sealed class OpenBatchForm : Form
                 item.SubItems.Add(job.Inspection?.Manifest.Patches.Count.ToString() ?? "");
                 item.SubItems.Add(job.Inspection?.ChangedFiles.Count.ToString() ?? "");
                 item.SubItems.Add(job.Inspection is null ? "" : $"+{job.Inspection.AddedLines} -{job.Inspection.RemovedLines}");
-                item.SubItems.Add(job.AllowDirty ? "Dirty allowed" : "Clean required");
+                item.SubItems.Add(BuildModeText(job));
                 item.SubItems.Add(job.Message);
                 _list.Items.Add(item);
                 if (string.Equals(selectedPath, job.PackagePath, StringComparison.OrdinalIgnoreCase))
@@ -500,6 +524,7 @@ internal sealed class OpenBatchForm : Form
             Package: {job.PackagePath}
             Repository: {job.RepositoryPath}
             Mode: {(job.AllowDirty ? $"Dirty allowed ({job.DirtyReason})" : "Clean required")}
+            Whitespace context: {(job.IgnoreSpaceChange ? "ignore-space-change" : "strict")}
             Path prefix: {(string.IsNullOrWhiteSpace(job.PathPrefix) ? "(none)" : job.PathPrefix)}
             Strict base: {job.StrictBase}
 
@@ -525,6 +550,7 @@ internal sealed class OpenBatchForm : Form
             Package: {job.PackagePath}
             Repository: {job.RepositoryPath ?? job.RepositoryOption ?? "(not resolved)"}
             Mode: {(job.AllowDirty ? $"Dirty allowed ({job.DirtyReason})" : "Clean required")}
+            Whitespace context: {(job.IgnoreSpaceChange ? "ignore-space-change" : "strict")}
             Path prefix: {(string.IsNullOrWhiteSpace(job.PathPrefix) ? "(none)" : job.PathPrefix)}
             Strict base: {job.StrictBase}
 
@@ -554,6 +580,7 @@ internal sealed class OpenBatchForm : Form
         _recheckButton.Enabled = enabled;
         _removeButton.Enabled = enabled;
         _copyButton.Enabled = enabled;
+        _ignoreSpaceChangeBox.Enabled = enabled;
     }
 
     private static string StateText(PackageState state)
@@ -594,6 +621,20 @@ internal sealed class OpenBatchForm : Form
         return $"...{path[^39..]}";
     }
 
+    private static string BuildModeText(PackageJob job)
+    {
+        var parts = new List<string>
+        {
+            job.AllowDirty ? "Dirty allowed" : "Clean required"
+        };
+        if (job.IgnoreSpaceChange)
+        {
+            parts.Add("Whitespace ok");
+        }
+
+        return string.Join(", ", parts);
+    }
+
     private static Icon? LoadAppIcon()
     {
         try
@@ -614,6 +655,7 @@ internal sealed class OpenBatchForm : Form
         public string? PathPrefix { get; set; }
         public bool AllowDirty { get; set; }
         public bool StrictBase { get; set; }
+        public bool IgnoreSpaceChange { get; set; }
         public string DirtyReason { get; set; } = "";
         public bool Selected { get; set; } = true;
         public PackageState State { get; set; } = PackageState.Pending;

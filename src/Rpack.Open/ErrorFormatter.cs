@@ -5,7 +5,7 @@ namespace Rpack.Open;
 
 internal static class ErrorFormatter
 {
-    public static PackageProblem FromCheckFailure(string message, bool allowDirty)
+    public static PackageProblem FromCheckFailure(string message, bool allowDirty, bool ignoreSpaceChange = false)
     {
         var normalized = Normalize(message);
         if (string.Equals(normalized, "Working tree is not clean.", StringComparison.Ordinal))
@@ -56,6 +56,15 @@ internal static class ErrorFormatter
                 normalized);
         }
 
+        if (normalized.Contains("Whitespace diagnostic", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PackageProblem(
+                "Whitespace mismatch",
+                "Strict patch validation failed, but Git reports that the patch can be applied when whitespace changes in context lines are ignored.",
+                "Fix final-newline/CRLF drift in the target file, or enable Allow whitespace context match / --ignore-space-change if that drift is intentional.",
+                normalized);
+        }
+
         if (normalized.Contains("Patch dry-run failed", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("Patch dry-run apply failed", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("Patch apply failed", StringComparison.OrdinalIgnoreCase)
@@ -65,9 +74,11 @@ internal static class ErrorFormatter
             || normalized.Contains("error:", StringComparison.OrdinalIgnoreCase))
         {
             return new PackageProblem(
-                "Patch dry-run failed",
+                ignoreSpaceChange ? "Patch failed with whitespace mode" : "Patch dry-run failed",
                 BuildPatchFailureSummary(normalized),
-                "Check that package paths are relative to the Git root. If the package came from a subdirectory snapshot, retry with --path-prefix.",
+                ignoreSpaceChange
+                    ? "The patch still does not match even with --ignore-space-change. Check target file contents and package base."
+                    : "Check that package paths are relative to the Git root. If the package came from a subdirectory snapshot, retry with --path-prefix.",
                 normalized);
         }
 

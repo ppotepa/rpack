@@ -116,7 +116,8 @@ static int RunCheck(string[] args, RpackPackageService service)
         RepositoryPath = ResolveRepositoryArgument(options),
         AllowDirty = options.Has("--allow-dirty"),
         StrictBase = options.Has("--strict-base"),
-        PathPrefix = options.Value("--path-prefix")
+        PathPrefix = options.Value("--path-prefix"),
+        IgnoreSpaceChange = options.Has("--ignore-space-change")
     });
 
     return PrintResult(result);
@@ -136,7 +137,8 @@ static int RunApply(string[] args, RpackPackageService service)
         RepositoryPath = ResolveRepositoryArgument(options),
         AllowDirty = options.Has("--allow-dirty"),
         StrictBase = options.Has("--strict-base"),
-        PathPrefix = options.Value("--path-prefix")
+        PathPrefix = options.Value("--path-prefix"),
+        IgnoreSpaceChange = options.Has("--ignore-space-change")
     });
 
     return PrintResult(result);
@@ -155,6 +157,7 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
     var allowDirty = options.Has("--allow-dirty");
     var strictBase = options.Has("--strict-base");
     var pathPrefix = options.Value("--path-prefix");
+    var ignoreSpaceChange = options.Has("--ignore-space-change");
     var allowedDirtyPaths = GetPackageDirtyException(repositoryPath, packagePath);
 
     var inspection = service.Inspect(new InspectPackageOptions
@@ -163,7 +166,7 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
         PathPrefix = pathPrefix
     });
 
-    PrintOpenSummary(inspection, repositoryPath, allowDirty, pathPrefix);
+    PrintOpenSummary(inspection, repositoryPath, allowDirty, ignoreSpaceChange, pathPrefix);
 
     var check = service.Check(new CheckPackageOptions
     {
@@ -172,7 +175,8 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
         AllowDirty = allowDirty,
         StrictBase = strictBase,
         PathPrefix = pathPrefix,
-        AllowedDirtyPaths = allowedDirtyPaths
+        AllowedDirtyPaths = allowedDirtyPaths,
+        IgnoreSpaceChange = ignoreSpaceChange
     });
 
     if (!check.Success)
@@ -194,7 +198,8 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
         AllowDirty = allowDirty,
         StrictBase = strictBase,
         PathPrefix = pathPrefix,
-        AllowedDirtyPaths = allowedDirtyPaths
+        AllowedDirtyPaths = allowedDirtyPaths,
+        IgnoreSpaceChange = ignoreSpaceChange
     });
 
     return PrintResult(apply);
@@ -284,7 +289,7 @@ static IReadOnlyList<string> GetPackageDirtyException(string repositoryPath, str
         : [relativePath];
 }
 
-static void PrintOpenSummary(PackageInspection inspection, string repositoryPath, bool allowDirty, string? pathPrefix)
+static void PrintOpenSummary(PackageInspection inspection, string repositoryPath, bool allowDirty, bool ignoreSpaceChange, string? pathPrefix)
 {
     Console.WriteLine($"{inspection.Manifest.Title} ({inspection.Manifest.Id})");
     Console.WriteLine($"packageId: {inspection.Manifest.Id}");
@@ -295,6 +300,7 @@ static void PrintOpenSummary(PackageInspection inspection, string repositoryPath
     Console.WriteLine($"addedLines: {inspection.AddedLines}");
     Console.WriteLine($"removedLines: {inspection.RemovedLines}");
     Console.WriteLine($"allowDirty: {allowDirty}");
+    Console.WriteLine($"ignoreSpaceChange: {ignoreSpaceChange}");
     if (!string.IsNullOrWhiteSpace(pathPrefix))
     {
         Console.WriteLine($"pathPrefix: {pathPrefix}");
@@ -346,9 +352,9 @@ static void PrintHelp()
       rpack create --staged -o <package.rpack> [--repo <repo>]
       rpack create --from <rev> --to <rev> -o <package.rpack> [--repo <repo>]
       rpack inspect <package.rpack> [--path-prefix <prefix>]
-      rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>]
-      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>]
-      rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--yes]
+      rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--ignore-space-change]
+      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--ignore-space-change]
+      rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--ignore-space-change] [--yes]
       rpack undo [repo] [--allow-dirty]
       rpack history [repo]
       rpack --version
@@ -357,6 +363,12 @@ static void PrintHelp()
       rpack applies validated patch packages to the Git working tree.
       It does not create commits, branches, or modify Git history.
       Local state is stored per repository under the Git metadata path for rpack.
+
+    Safety options:
+      --allow-dirty          Allow checking or applying into a dirty working tree.
+      --strict-base          Fail when the package base commit differs from HEAD.
+      --path-prefix <prefix> Prefix patch paths at check/apply time.
+      --ignore-space-change  Let Git ignore whitespace-only context differences.
     """);
 }
 

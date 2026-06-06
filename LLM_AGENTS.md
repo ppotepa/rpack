@@ -77,6 +77,16 @@ rpack check change.rpack
 
 Deliver `change.rpack` to the user.
 
+If strict validation fails but rpack says the patch set passes with
+`--ignore-space-change`, explain that the target file has whitespace-only
+context, CRLF/LF, or final-newline drift. Do not silently rely on that mode.
+Tell the user to use it only when that drift is intentional:
+
+```bash
+rpack check change.rpack --ignore-space-change
+rpack apply change.rpack --ignore-space-change
+```
+
 ## Staged-Only Workflow
 
 If the agent needs precise control over what enters the package, stage only the intended files:
@@ -434,6 +444,15 @@ first, then prefixes temporary patch paths before calling `git apply`.
 
 If the target repo has different Git history but the patch context matches, `rpack check` may pass with a base commit warning. This is expected.
 
+If `rpack check` reports a whitespace diagnostic, retry with
+`--ignore-space-change` only after confirming the mismatch is limited to
+whitespace context or final-newline drift:
+
+```bash
+rpack check change.rpack --ignore-space-change
+rpack apply change.rpack --ignore-space-change
+```
+
 Use strict base matching only when the package must be applied to the exact recorded base commit:
 
 ```bash
@@ -518,6 +537,15 @@ rpack check change.rpack --allow-dirty
 If `rpack check` warns about base commit mismatch but still says the patch can be applied, the package is compatible by patch context.
 
 If `rpack check` fails at `git apply --check`, the target repository is not compatible with the patch in its current state.
+
+If `rpack check` says the patch set passes with `--ignore-space-change`, the
+repository content is close enough for Git when whitespace-only context
+differences are ignored. Prefer regenerating the package or normalizing the
+target file when possible; otherwise apply with:
+
+```bash
+rpack apply change.rpack --ignore-space-change
+```
 
 If `rpack check` fails with "No such file or directory" and the package was
 created from a snapshot root below the Git root, retry with `--path-prefix`.

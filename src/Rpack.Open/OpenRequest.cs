@@ -7,6 +7,7 @@ internal sealed class OpenRequest
     public string? PathPrefix { get; init; }
     public bool AllowDirty { get; init; }
     public bool StrictBase { get; init; }
+    public bool IgnoreSpaceChange { get; init; }
     public string DirtyReason { get; init; } = "";
 
     public static OpenRequest FromOptions(OpenOptions options, bool shiftPressed)
@@ -39,6 +40,7 @@ internal sealed class OpenRequest
             PathPrefix = options.Value("--path-prefix"),
             AllowDirty = allowDirty,
             StrictBase = options.Has("--strict-base"),
+            IgnoreSpaceChange = options.Has("--ignore-space-change"),
             DirtyReason = dirtyReason
         };
     }

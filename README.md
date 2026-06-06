@@ -90,7 +90,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.7
+.\scripts\build-windows-msi.ps1 -Version 0.1.8
 ```
 
 ## Usage
@@ -169,6 +169,17 @@ rpack apply change.rpack ./repo --path-prefix src
 Use this when a package contains paths such as `aot/project/file.cs`, but the
 real Git-root path is `src/aot/project/file.cs`.
 
+If strict patch context fails only because the target file has CRLF/LF,
+whitespace-only context, or final-newline drift, `rpack check` reports that the
+same patch set passes with Git's whitespace context mode. Use it only when that
+drift is intentional:
+
+```bash
+rpack check change.rpack --ignore-space-change
+rpack apply change.rpack --ignore-space-change
+rpack open change.rpack --ignore-space-change
+```
+
 Undo the last applied package:
 
 ```bash
@@ -222,6 +233,12 @@ It does not bypass checksum verification, dry-run apply, or strict base behavior
 when `--strict-base` is used. The context menu also includes an extended
 Shift-right-click action named `Apply with rpack allowing dirty`.
 
+If a package fails strict patch validation but Git can apply it while ignoring
+whitespace-only context differences, the window shows a dedicated whitespace
+diagnostic. The `Allow whitespace context match` checkbox rechecks pending
+packages with the equivalent of `--ignore-space-change` and applies them with
+the same mode.
+
 The batch window stops applying at the first failed package and keeps the raw Git
 or package error available in the details panel for diagnosis.
 
@@ -237,7 +254,7 @@ By default, `rpack check` and `rpack apply` require:
 - valid `manifest.json`
 - matching SHA-256 checksums
 - safe archive paths
-- clean Git working tree
+- clean Git working tree based on real tracked diffs plus untracked files
 - successful `git apply --check`
 
 Source commit mismatch is a warning by default. This is intentional: `rpack` is meant to apply patches to compatible working trees, even when Git history differs.
@@ -263,6 +280,10 @@ rpack undo --allow-dirty
 
 `--path-prefix` is applied only at check/apply time after package checksum
 verification. It does not modify the `.rpack` file or its manifest.
+
+`--ignore-space-change` changes only Git patch context matching. It does not
+skip checksum verification, clean-tree checks, base checks, or package path
+safety. Prefer fixing the target file when the whitespace drift is accidental.
 
 ## Package Format
 
