@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-06-07
+
+### Added
+
+- Added `rpack diagnose` for non-mutating package check reports with likely-cause summaries.
+- Added `rpack lint` for package safety and patch quality checks.
+- Added lint rules for generated output paths, `.rpack` files, common secret markers, local machine paths, large hunks, no-final-newline markers, and trailing whitespace.
+
+### Changed
+
+- Expanded the roadmap around diagnostics, idempotency, validation runner, semantic operations, snapshots, and three-way apply.
+
 ## [0.1.10] - 2026-06-07
 
 ### Added

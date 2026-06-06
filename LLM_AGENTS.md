@@ -69,10 +69,22 @@ Inspect the package:
 rpack inspect change.rpack
 ```
 
+Lint the package before delivery:
+
+```bash
+rpack lint change.rpack
+```
+
 Check that the package applies cleanly to the current repo:
 
 ```bash
 rpack check change.rpack
+```
+
+If check fails, produce a diagnosis for the user:
+
+```bash
+rpack diagnose change.rpack
 ```
 
 Deliver `change.rpack` to the user.
@@ -393,6 +405,7 @@ Added lines: <number>
 Removed lines: <number>
 Validation:
 - rpack inspect: passed
+- rpack lint: passed/failed/not run
 - rpack check: passed/failed/not run
 Notes:
 - <important assumptions or manual follow-up>

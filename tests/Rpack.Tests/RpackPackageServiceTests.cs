@@ -227,6 +227,73 @@ public class RpackPackageServiceTests
     }
 
     [Fact]
+    public void Diagnose_ReportsLikelyCauseForAddedFileConflict()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        InitializeRepository(target);
+
+        File.WriteAllText(Path.Combine(source, "new-file.txt"), "from package");
+        Git(source, "add", "-N", "new-file.txt");
+        File.WriteAllText(Path.Combine(target, "new-file.txt"), "already here");
+        Git(target, "add", "new-file.txt");
+        Git(target, "commit", "-m", "already-has-file");
+
+        var packagePath = Path.Combine(workspace.Path, "diagnose.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var diagnosis = service.Diagnose(new DiagnosePackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.True(create.Success, create.Message);
+        Assert.False(diagnosis.Success);
+        Assert.Contains("Status: Failed", diagnosis.Message);
+        Assert.Contains("different content", diagnosis.Message);
+        Assert.Contains("Raw details:", diagnosis.Message);
+    }
+
+    [Fact]
+    public void Lint_FailsForGeneratedOutputAndSecretMarkers()
+    {
+        using var workspace = new TempWorkspace();
+        var packagePath = Path.Combine(workspace.Path, "lint.rpack");
+        var patch = """
+            diff --git a/bin/debug/app.dll b/bin/debug/app.dll
+            new file mode 100644
+            index 0000000..1111111
+            Binary files /dev/null and b/bin/debug/app.dll differ
+            diff --git a/config.txt b/config.txt
+            new file mode 100644
+            --- /dev/null
+            +++ b/config.txt
+            @@ -0,0 +1,2 @@
+            +api_key=abc123
+            +path=D:\Git\local
+            """;
+        WriteManualPackage(packagePath, ("patches/change.patch", patch));
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+
+        var lint = service.Lint(new LintPackageOptions
+        {
+            PackagePath = packagePath
+        });
+
+        Assert.False(lint.Success);
+        Assert.Contains("forbidden-path", lint.Message);
+        Assert.Contains("secret-marker", lint.Message);
+        Assert.Contains("local-path", lint.Message);
+    }
+
+    [Fact]
     public void Apply_SkipsAlreadyPresentAddedFileWhenContentMatches()
     {
         using var workspace = new TempWorkspace();

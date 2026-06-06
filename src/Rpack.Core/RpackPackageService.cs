@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Rpack.Core;
 
@@ -9,6 +10,46 @@ public sealed class RpackPackageService
     private const string ManifestPath = "manifest.json";
     private const string PatchPath = "patches/change.patch";
     private const string ApplyLogPath = "apply-log.json";
+    private static readonly string[] ForbiddenPathPatterns =
+    [
+        "logs/",
+        "artifacts/",
+        "release/",
+        "bin/",
+        "obj/",
+        ".env",
+        ".key",
+        ".pem",
+        ".pdb",
+        ".exe",
+        ".dll",
+        ".rpack",
+        ".user",
+        ".suo"
+    ];
+    private static readonly Regex SecretAssignmentPattern = new(
+        @"(?i)\b(api[_-]?key|secret|token|password)\b\s*[:=]\s*[""']?[A-Za-z0-9_\-./+=]{6,}",
+        RegexOptions.Compiled);
+    private static readonly string[] LocalPathMarkers =
+    [
+        "D:\\Git\\",
+        "C:\\Users\\",
+        "/home/"
+    ];
+    private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".cs",
+        ".md",
+        ".json",
+        ".ps1",
+        ".csproj",
+        ".sln",
+        ".slnx",
+        ".xml",
+        ".txt",
+        ".yml",
+        ".yaml"
+    };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -186,6 +227,107 @@ public sealed class RpackPackageService
         return string.IsNullOrWhiteSpace(baseWarning)
             ? applyCheck
             : RpackResult.Ok($"{applyCheck.Message}{Environment.NewLine}Warning: {baseWarning}");
+    }
+
+    public RpackResult Diagnose(DiagnosePackageOptions options)
+    {
+        PackageInspection inspection;
+        try
+        {
+            inspection = Inspect(new InspectPackageOptions
+            {
+                PackagePath = options.PackagePath,
+                PathPrefix = options.PathPrefix
+            });
+        }
+        catch (Exception ex)
+        {
+            return RpackResult.Fail($"Diagnosis failed while reading package:{Environment.NewLine}{ex.Message}");
+        }
+
+        var check = Check(new CheckPackageOptions
+        {
+            PackagePath = options.PackagePath,
+            RepositoryPath = options.RepositoryPath,
+            AllowDirty = options.AllowDirty,
+            StrictBase = options.StrictBase,
+            PathPrefix = options.PathPrefix,
+            IgnoreSpaceChange = options.IgnoreSpaceChange
+        });
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"Package: {options.PackagePath}");
+        builder.AppendLine($"Repository: {options.RepositoryPath}");
+        builder.AppendLine($"Id: {inspection.Manifest.Id}");
+        builder.AppendLine($"Title: {inspection.Manifest.Title}");
+        builder.AppendLine($"Files: {inspection.ChangedFiles.Count}");
+        builder.AppendLine($"Patches: {inspection.Manifest.Patches.Count}");
+        builder.AppendLine();
+        builder.AppendLine(check.Success ? "Status: Ready" : "Status: Failed");
+        builder.AppendLine();
+
+        if (check.Success)
+        {
+            builder.AppendLine("Check:");
+            builder.AppendLine(check.Message);
+            return RpackResult.Ok(builder.ToString().TrimEnd());
+        }
+
+        builder.AppendLine("Problem:");
+        builder.AppendLine(ClassifyCheckFailure(check.Message));
+        builder.AppendLine();
+        builder.AppendLine("Raw details:");
+        builder.AppendLine(check.Message);
+        return RpackResult.Fail(builder.ToString().TrimEnd());
+    }
+
+    public RpackResult Lint(LintPackageOptions options)
+    {
+        var pathPrefix = NormalizePathPrefix(options.PathPrefix);
+        using var archive = ZipFile.OpenRead(options.PackagePath);
+        var manifest = ReadManifest(archive);
+        var manifestResult = ValidateManifest(manifest);
+        if (!manifestResult.Success)
+        {
+            return manifestResult;
+        }
+
+        var checksumResult = VerifyChecksums(archive, manifest);
+        if (!checksumResult.Success)
+        {
+            return checksumResult;
+        }
+
+        var issues = new List<LintIssue>();
+        foreach (var patch in manifest.Patches)
+        {
+            var patchContent = RewritePatchPaths(ReadEntryText(archive, patch.Path), pathPrefix);
+            var changedFiles = AnalyzePatch(patchContent);
+            foreach (var file in changedFiles)
+            {
+                AddPathLintIssues(issues, patch.Path, file.Path);
+            }
+
+            AddContentLintIssues(issues, patch.Path, patchContent);
+            AddQualityLintIssues(issues, patch.Path, patchContent, changedFiles);
+        }
+
+        if (issues.Count == 0)
+        {
+            return RpackResult.Ok("Lint passed.");
+        }
+
+        var hasErrors = issues.Any(issue => issue.Severity == "error");
+        var builder = new StringBuilder();
+        builder.AppendLine($"Lint found {issues.Count} issue(s):");
+        foreach (var issue in issues)
+        {
+            builder.AppendLine($"[{issue.Severity}] {issue.Code}: {issue.Message}");
+        }
+
+        return hasErrors
+            ? RpackResult.Fail(builder.ToString().TrimEnd())
+            : RpackResult.Ok(builder.ToString().TrimEnd());
     }
 
     public RpackResult Apply(ApplyPackageOptions options)
@@ -667,6 +809,156 @@ public sealed class RpackPackageService
             .Replace("\r", "\n", StringComparison.Ordinal);
     }
 
+    private static string ClassifyCheckFailure(string message)
+    {
+        if (message.Contains("Added-file conflict", StringComparison.OrdinalIgnoreCase))
+        {
+            return "A file the package wants to add already exists in the target repository with different content. Regenerate the package against the current checkout or resolve the file manually.";
+        }
+
+        if (message.Contains("Already-present diagnostic", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("already exists in working directory", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The target repository already contains file(s) the package wants to add. The package may be partially applied or based on an older target.";
+        }
+
+        if (message.Contains("Whitespace diagnostic", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Strict patch context failed, but whitespace-compatible context would pass. Run without --strict or normalize line endings/final newlines.";
+        }
+
+        if (message.Contains("No such file or directory", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("does not exist in index", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The patch references a path that does not exist in the target repository. Check repository version or try --path-prefix when the package was made from a subdirectory snapshot.";
+        }
+
+        if (message.Contains("Package base commit differs", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The package was created from a different base commit than the target repository HEAD.";
+        }
+
+        if (message.Contains("patch does not apply", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("patch failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Patch context does not match the target file. Regenerate the package against the current checkout or run diagnose with path-prefix/strict options adjusted.";
+        }
+
+        return "Package check failed. Review raw details.";
+    }
+
+    private static void AddPathLintIssues(List<LintIssue> issues, string patchPath, string filePath)
+    {
+        var normalized = NormalizeGitPath(filePath);
+        var lower = normalized.ToLowerInvariant();
+        foreach (var pattern in ForbiddenPathPatterns)
+        {
+            if (pattern.EndsWith("/", StringComparison.Ordinal))
+            {
+                if (lower.StartsWith(pattern, StringComparison.Ordinal) || lower.Contains($"/{pattern}", StringComparison.Ordinal))
+                {
+                    issues.Add(new LintIssue("error", "forbidden-path", $"{patchPath}: {filePath} matches forbidden path pattern `{pattern}**`."));
+                }
+
+                continue;
+            }
+
+            if (lower.EndsWith(pattern, StringComparison.Ordinal))
+            {
+                issues.Add(new LintIssue("error", "forbidden-path", $"{patchPath}: {filePath} matches forbidden file pattern `*{pattern}`."));
+            }
+        }
+    }
+
+    private static void AddContentLintIssues(List<LintIssue> issues, string patchPath, string patchContent)
+    {
+        var addedLines = patchContent
+            .Split('\n')
+            .Select(line => line.TrimEnd('\r'))
+            .Where(line => line.StartsWith('+') && !line.StartsWith("+++", StringComparison.Ordinal))
+            .Select(line => line[1..])
+            .ToArray();
+
+        var secretMatch = addedLines.FirstOrDefault(line => line.Contains("BEGIN PRIVATE KEY", StringComparison.OrdinalIgnoreCase)
+            || SecretAssignmentPattern.IsMatch(line));
+        if (secretMatch is not null)
+        {
+            issues.Add(new LintIssue("error", "secret-marker", $"{patchPath}: patch content contains a likely secret assignment or private key marker."));
+        }
+
+        foreach (var marker in LocalPathMarkers)
+        {
+            if (addedLines.Any(line => line.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+            {
+                issues.Add(new LintIssue("warning", "local-path", $"{patchPath}: patch content contains local path marker `{marker}`."));
+            }
+        }
+    }
+
+    private static void AddQualityLintIssues(List<LintIssue> issues, string patchPath, string patchContent, IReadOnlyList<PatchFileSummary> changedFiles)
+    {
+        foreach (var file in changedFiles)
+        {
+            var extension = Path.GetExtension(file.Path);
+            if (file.Status == "binary" && TextExtensions.Contains(extension))
+            {
+                issues.Add(new LintIssue("warning", "binary-text-file", $"{patchPath}: {file.Path} is a text-like file represented as a binary patch."));
+            }
+
+            if (file.RemovedLines > 0 && file.AddedLines > 0)
+            {
+                var bigger = Math.Max(file.AddedLines, file.RemovedLines);
+                var smaller = Math.Min(file.AddedLines, file.RemovedLines);
+                if (bigger >= 200 && smaller > 0 && (double)bigger / smaller > 4)
+                {
+                    issues.Add(new LintIssue("warning", "possible-whole-file-rewrite", $"{patchPath}: {file.Path} looks like a possible whole-file rewrite (+{file.AddedLines}/-{file.RemovedLines})."));
+                }
+            }
+        }
+
+        var hunkAdded = 0;
+        var hunkRemoved = 0;
+        foreach (var rawLine in patchContent.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            if (line.StartsWith("@@ ", StringComparison.Ordinal))
+            {
+                FlushHunk();
+                continue;
+            }
+
+            if (line.StartsWith('+') && !line.StartsWith("+++", StringComparison.Ordinal))
+            {
+                hunkAdded++;
+                if (line.Length > 1 && (line.EndsWith(' ') || line.EndsWith('\t')))
+                {
+                    issues.Add(new LintIssue("warning", "trailing-whitespace", $"{patchPath}: added line contains trailing whitespace."));
+                }
+            }
+            else if (line.StartsWith('-') && !line.StartsWith("---", StringComparison.Ordinal))
+            {
+                hunkRemoved++;
+            }
+            else if (line.StartsWith(@"\ No newline", StringComparison.Ordinal))
+            {
+                issues.Add(new LintIssue("warning", "no-final-newline", $"{patchPath}: patch contains no-final-newline marker."));
+            }
+        }
+
+        FlushHunk();
+
+        void FlushHunk()
+        {
+            if (hunkAdded + hunkRemoved > 300)
+            {
+                issues.Add(new LintIssue("warning", "large-hunk", $"{patchPath}: hunk changes {hunkAdded + hunkRemoved} line(s)."));
+            }
+
+            hunkAdded = 0;
+            hunkRemoved = 0;
+        }
+    }
+
     private string FindFirstIndividuallyFailingPatch(string repositoryPath, TempPatchSet tempPatchSet, bool ignoreSpaceChange)
     {
         foreach (var patch in tempPatchSet.Patches)
@@ -1144,6 +1436,8 @@ public sealed class RpackPackageService
 
     private sealed record AddedTextFile(string Path, string Content);
 
+    private sealed record LintIssue(string Severity, string Code, string Message);
+
     private sealed record TempPatch(string ManifestPath, string TempPath);
 
     private sealed class TempPatchSet : IDisposable
@@ -1217,6 +1511,22 @@ public sealed class ApplyPackageOptions
     public string? PathPrefix { get; init; }
     public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
     public bool IgnoreSpaceChange { get; init; } = true;
+}
+
+public sealed class DiagnosePackageOptions
+{
+    public required string PackagePath { get; init; }
+    public required string RepositoryPath { get; init; }
+    public bool AllowDirty { get; init; }
+    public bool StrictBase { get; init; }
+    public string? PathPrefix { get; init; }
+    public bool IgnoreSpaceChange { get; init; } = true;
+}
+
+public sealed class LintPackageOptions
+{
+    public required string PackagePath { get; init; }
+    public string? PathPrefix { get; init; }
 }
 
 public sealed class InspectPackageOptions

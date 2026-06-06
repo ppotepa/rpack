@@ -90,7 +90,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.10
+.\scripts\build-windows-msi.ps1 -Version 0.1.11
 ```
 
 ## Usage
@@ -128,6 +128,19 @@ Check whether a package applies to the current repository:
 
 ```bash
 rpack check change.rpack
+```
+
+Diagnose a failed check without modifying the working tree:
+
+```bash
+rpack diagnose change.rpack
+```
+
+Lint a package for generated output, common secret markers, local machine paths,
+and fragile patch quality:
+
+```bash
+rpack lint change.rpack
 ```
 
 Apply a package to the current repository:
@@ -258,6 +271,11 @@ By default, `rpack check` and `rpack apply` require:
 - safe archive paths
 - clean Git working tree based on real tracked diffs plus untracked files
 - successful `git apply --check` with whitespace-compatible context matching
+
+`rpack lint` additionally scans package paths and patch content for risky
+generated outputs, `.rpack` files, common secret markers, local machine paths,
+large hunks, no-final-newline markers, and trailing whitespace. Lint does not
+modify the target repository.
 
 Source commit mismatch is a warning by default. This is intentional: `rpack` is meant to apply patches to compatible working trees, even when Git history differs.
 

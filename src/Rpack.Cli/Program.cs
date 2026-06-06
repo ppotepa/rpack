@@ -24,6 +24,8 @@ try
         "create" => RunCreate(args.Skip(1).ToArray(), service),
         "inspect" => RunInspect(args.Skip(1).ToArray(), service),
         "check" => RunCheck(args.Skip(1).ToArray(), service),
+        "diagnose" => RunDiagnose(args.Skip(1).ToArray(), service),
+        "lint" => RunLint(args.Skip(1).ToArray(), service),
         "apply" => RunApply(args.Skip(1).ToArray(), service),
         "open" => RunOpen(args.Skip(1).ToArray(), service, gitClient),
         "undo" => RunUndo(args.Skip(1).ToArray(), service),
@@ -139,6 +141,44 @@ static int RunApply(string[] args, RpackPackageService service)
         StrictBase = options.Has("--strict-base"),
         PathPrefix = options.Value("--path-prefix"),
         IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
+    });
+
+    return PrintResult(result);
+}
+
+static int RunDiagnose(string[] args, RpackPackageService service)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return Fail("Usage: rpack diagnose <package.rpack> [repo]");
+    }
+
+    var result = service.Diagnose(new DiagnosePackageOptions
+    {
+        PackagePath = options.Positionals[0],
+        RepositoryPath = ResolveRepositoryArgument(options),
+        AllowDirty = options.Has("--allow-dirty"),
+        StrictBase = options.Has("--strict-base"),
+        PathPrefix = options.Value("--path-prefix"),
+        IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
+    });
+
+    return PrintResult(result);
+}
+
+static int RunLint(string[] args, RpackPackageService service)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return Fail("Usage: rpack lint <package.rpack>");
+    }
+
+    var result = service.Lint(new LintPackageOptions
+    {
+        PackagePath = options.Positionals[0],
+        PathPrefix = options.Value("--path-prefix")
     });
 
     return PrintResult(result);
@@ -353,6 +393,8 @@ static void PrintHelp()
       rpack create --from <rev> --to <rev> -o <package.rpack> [--repo <repo>]
       rpack inspect <package.rpack> [--path-prefix <prefix>]
       rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
+      rpack diagnose <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
+      rpack lint <package.rpack> [--path-prefix <prefix>]
       rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
       rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--yes]
       rpack undo [repo] [--allow-dirty]
