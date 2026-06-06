@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-06
+
+### Added
+
+- Added the rpack SVG logo to the README.
+- Added a generated Windows `.ico` asset from the rpack logo.
+- Embedded the rpack icon into `rpack.exe` and `rpack-open.exe` for Windows builds.
+- Installed the rpack icon through the MSI and used it for `.rpack` file association.
+
 ## [0.1.5] - 2026-06-06
 
 ### Added

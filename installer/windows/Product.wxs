@@ -37,10 +37,13 @@
       <Component Id="RpackOpenExecutable" Guid="*">
         <File Id="RpackOpenExe" Source="$(var.PublishDir)\rpack-open.exe" KeyPath="yes" />
       </Component>
+      <Component Id="RpackIcon" Guid="*">
+        <File Id="RpackIconFile" Source="$(var.PublishDir)\rpack.ico" KeyPath="yes" />
+      </Component>
       <Component Id="RpackFileAssociation" Guid="*">
         <RegistryValue Root="HKCR" Key=".rpack" Value="rpack.package" Type="string" KeyPath="yes" />
         <RegistryValue Root="HKCR" Key="rpack.package" Value="rpack Package" Type="string" />
-        <RegistryValue Root="HKCR" Key="rpack.package\DefaultIcon" Value="&quot;[INSTALLFOLDER]rpack-open.exe&quot;,0" Type="string" />
+        <RegistryValue Root="HKCR" Key="rpack.package\DefaultIcon" Value="&quot;[INSTALLFOLDER]rpack.ico&quot;" Type="string" />
         <RegistryValue Root="HKCR" Key="rpack.package\shell\open" Value="Open with rpack" Type="string" />
         <RegistryValue Root="HKCR" Key="rpack.package\shell\open\command" Value="&quot;[INSTALLFOLDER]rpack-open.exe&quot; &quot;%1&quot;" Type="string" />
         <RegistryValue Root="HKCR" Key="rpack.package\shell\apply-dirty" Value="Apply with rpack allowing dirty" Type="string" />

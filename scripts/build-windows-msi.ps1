@@ -1,5 +1,5 @@
 param(
-    [string] $Version = "0.1.5",
+    [string] $Version = "0.1.6",
     [string] $Runtime = "win-x64",
     [string] $Configuration = "Release",
     [string] $OutputDirectory = "artifacts"
@@ -45,6 +45,8 @@ dotnet publish (Join-Path $repoRoot "src/Rpack.Open/Rpack.Open.csproj") `
     -p:DebugSymbols=false `
     -p:Version=$Version `
     --output $publishDir
+
+Copy-Item (Join-Path $repoRoot "assets/rpack.ico") (Join-Path $publishDir "rpack.ico") -Force
 
 & $wixExe build (Join-Path $repoRoot "installer/windows/Product.wxs") `
     -arch x64 `

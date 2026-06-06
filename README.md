@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/rpack.svg" width="96" alt="rpack logo">
+</p>
+
 # rpack
 
 **Repository Pack**: portable, validated patch packages for Git working trees.
@@ -86,7 +90,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.5
+.\scripts\build-windows-msi.ps1 -Version 0.1.6
 ```
 
 ## Usage
@@ -185,7 +189,9 @@ rpack --version
 
 ## Windows Double-Click
 
-The Windows MSI registers `.rpack` files with `rpack-open.exe`.
+The Windows MSI registers `.rpack` files with `rpack-open.exe` and installs the
+rpack icon for the file association. Both `rpack.exe` and `rpack-open.exe` are
+published with the same embedded icon on Windows builds.
 
 When a package is double-clicked, rpack:
 
