@@ -54,6 +54,37 @@ public sealed class GitClient
             : RpackResult.Fail("Working tree is not clean.");
     }
 
+    public IReadOnlyList<string> GetChangedPaths(string repositoryPath)
+    {
+        var result = _processRunner.Run("git", ["status", "--porcelain"], repositoryPath);
+        if (!result.Success)
+        {
+            throw new InvalidOperationException(result.CombinedOutput);
+        }
+
+        return result.StandardOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r'))
+            .Select(ParseStatusPath)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string ParseStatusPath(string statusLine)
+    {
+        if (statusLine.Length <= 3)
+        {
+            return "";
+        }
+
+        var path = statusLine[3..].Trim().Trim('"');
+        var renameIndex = path.LastIndexOf(" -> ", StringComparison.Ordinal);
+        return renameIndex >= 0
+            ? path[(renameIndex + " -> ".Length)..].Trim().Trim('"')
+            : path;
+    }
+
     public string ResolveCommit(string repositoryPath, string revision)
     {
         var result = _processRunner.Run("git", ["rev-parse", revision], repositoryPath);

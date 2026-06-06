@@ -9,11 +9,23 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>rpack</AssemblyName>
     <RootNamespace>Rpack.Cli</RootNamespace>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Authors>Pawel Potepa</Authors>
     <Description>Portable, validated patch packages for Git working trees.</Description>
+    <PackageId>rpack</PackageId>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>git;patch;cli;repository</PackageTags>
+    <RepositoryUrl>https://github.com/ppotepa/rpack</RepositoryUrl>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>rpack</ToolCommandName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>

@@ -39,13 +39,16 @@ Implemented:
 - clean working tree requirement by default
 - `git apply --check` before apply
 - per-repository local state under Git metadata
+- patch summary in `inspect`
+- .NET global tool package metadata
+- GitHub Actions CI
 
 Not implemented yet:
 
 - package signing
 - multiple patch files
 - binary file overlay mode
-- NuGet/global tool packaging
+- NuGet publication
 - GitHub release automation
 
 ## Install
@@ -57,6 +60,7 @@ https://github.com/ppotepa/rpack/releases
 ```
 
 The MSI installs `rpack.exe` and adds the installation directory to `PATH`.
+Open a new terminal after installation if `rpack` is not immediately found.
 
 You can also build from source:
 
@@ -70,11 +74,16 @@ Run through `dotnet run`:
 dotnet run --project src/Rpack.Cli -- create -o change.rpack
 ```
 
-Later releases should provide a .NET global tool and standalone binaries.
+Build a local .NET tool package:
+
+```bash
+dotnet pack src/Rpack.Cli -c Release
+```
+
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.1
+.\scripts\build-windows-msi.ps1 -Version 0.1.2
 ```
 
 ## Usage
@@ -102,6 +111,9 @@ Inspect a package without applying it:
 ```bash
 rpack inspect change.rpack
 ```
+
+`inspect` shows package metadata, changed file count, added/removed line counts,
+and a short per-file patch summary.
 
 Check whether a package applies to the current repository:
 
@@ -134,6 +146,12 @@ Show local rpack history:
 rpack history
 ```
 
+Print the installed version:
+
+```bash
+rpack --version
+```
+
 ## Safety Model
 
 By default, `rpack check` and `rpack apply` require:
@@ -157,6 +175,12 @@ Use `--allow-dirty` only when applying into a dirty working tree is intentional:
 
 ```bash
 rpack apply change.rpack --allow-dirty
+```
+
+`rpack undo` blocks extra dirty paths by default and allows them only with:
+
+```bash
+rpack undo --allow-dirty
 ```
 
 ## Package Format

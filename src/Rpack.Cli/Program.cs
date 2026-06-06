@@ -1,6 +1,13 @@
+using System.Reflection;
 using Rpack.Core;
 
 var command = args.FirstOrDefault();
+if (command is "--version" or "-v" or "version")
+{
+    PrintVersion();
+    return 0;
+}
+
 if (string.IsNullOrWhiteSpace(command) || command is "-h" or "--help" or "help")
 {
     PrintHelp();
@@ -68,6 +75,18 @@ static int RunInspect(string[] args, RpackPackageService service)
     Console.WriteLine($"sourceRepository: {inspection.Manifest.Source?.Repository}");
     Console.WriteLine($"baseCommit: {inspection.Manifest.Source?.BaseCommit ?? inspection.Manifest.BaseCommit}");
     Console.WriteLine($"headCommit: {inspection.Manifest.Source?.HeadCommit}");
+    Console.WriteLine($"changedFiles: {inspection.ChangedFiles.Count}");
+    Console.WriteLine($"addedLines: {inspection.AddedLines}");
+    Console.WriteLine($"removedLines: {inspection.RemovedLines}");
+    if (inspection.ChangedFiles.Count > 0)
+    {
+        Console.WriteLine("patch:");
+        foreach (var file in inspection.ChangedFiles)
+        {
+            Console.WriteLine($"  {file.Status,-8} +{file.AddedLines,-4} -{file.RemovedLines,-4} {file.Path}");
+        }
+    }
+
     Console.WriteLine("entries:");
     foreach (var entry in inspection.Entries)
     {
@@ -182,12 +201,24 @@ static void PrintHelp()
       rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base]
       rpack undo [repo] [--allow-dirty]
       rpack history [repo]
+      rpack --version
 
     Model:
       rpack applies validated patch packages to the Git working tree.
       It does not create commits, branches, or modify Git history.
       Local state is stored per repository under the Git metadata path for rpack.
     """);
+}
+
+static void PrintVersion()
+{
+    var version = Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+        .InformationalVersion
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+        ?? "unknown";
+
+    Console.WriteLine($"rpack {version}");
 }
 
 internal sealed class CliOptions

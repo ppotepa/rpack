@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-06
+
+### Added
+
+- Added `rpack --version`.
+- Added patch summary output to `rpack inspect`.
+- Added .NET global tool package metadata.
+- Added GitHub Actions CI.
+- Added tests for checksum mismatch, unsafe archive paths, dirty working trees, and dirty undo behavior.
+
+### Changed
+
+- `rpack undo` now blocks extra dirty paths by default and allows them only with `--allow-dirty`.
+
 ## [0.1.1] - 2026-06-06
 
 ### Added

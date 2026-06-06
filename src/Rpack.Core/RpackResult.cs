@@ -19,4 +19,15 @@ public sealed class PackageInspection
 {
     public required RpackManifest Manifest { get; init; }
     public required IReadOnlyList<string> Entries { get; init; }
+    public required IReadOnlyList<PatchFileSummary> ChangedFiles { get; init; }
+    public int AddedLines => ChangedFiles.Sum(file => file.AddedLines);
+    public int RemovedLines => ChangedFiles.Sum(file => file.RemovedLines);
+}
+
+public sealed class PatchFileSummary
+{
+    public required string Path { get; init; }
+    public required string Status { get; init; }
+    public int AddedLines { get; init; }
+    public int RemovedLines { get; init; }
 }

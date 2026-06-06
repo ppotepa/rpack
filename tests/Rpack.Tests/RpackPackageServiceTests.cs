@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using Rpack.Core;
 
 namespace Rpack.Tests;
@@ -29,6 +30,7 @@ public class RpackPackageServiceTests
             Id = "test-package",
             Title = "Test package"
         });
+        var inspection = service.Inspect(packagePath);
         var check = service.Check(new CheckPackageOptions
         {
             PackagePath = packagePath,
@@ -48,6 +50,10 @@ public class RpackPackageServiceTests
         var historyAfterApply = service.ReadHistory(target);
 
         Assert.True(create.Success, create.Message);
+        Assert.Single(inspection.ChangedFiles);
+        Assert.Equal("hello.txt", inspection.ChangedFiles[0].Path);
+        Assert.Equal(1, inspection.AddedLines);
+        Assert.Equal(1, inspection.RemovedLines);
         Assert.True(check.Success, check.Message);
         Assert.Contains("Warning:", check.Message);
         Assert.False(strictCheck.Success);
@@ -98,6 +104,133 @@ public class RpackPackageServiceTests
         Assert.False(File.Exists(Path.Combine(target, "unstaged.txt")));
     }
 
+    [Fact]
+    public void Check_FailsWhenChecksumDoesNotMatch()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+
+        var packagePath = Path.Combine(workspace.Path, "checksum.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        ReplaceZipEntry(packagePath, "patches/change.patch", "not the original patch");
+
+        var check = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.True(create.Success, create.Message);
+        Assert.False(check.Success);
+        Assert.Contains("Checksum mismatch", check.Message);
+    }
+
+    [Fact]
+    public void Check_FailsWhenManifestContainsUnsafePatchPath()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+
+        var packagePath = Path.Combine(workspace.Path, "unsafe.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var manifest = ReadZipEntry(packagePath, "manifest.json")
+            .Replace("\"Path\": \"patches/change.patch\"", "\"Path\": \"../evil.patch\"", StringComparison.Ordinal);
+        ReplaceZipEntry(packagePath, "manifest.json", manifest);
+
+        var check = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.True(create.Success, create.Message);
+        Assert.False(check.Success);
+        Assert.Contains("Unsafe archive path", check.Message);
+    }
+
+    [Fact]
+    public void Apply_FailsOnDirtyWorkingTreeUnlessAllowed()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+        File.WriteAllText(Path.Combine(target, "dirty.txt"), "dirty");
+
+        var packagePath = Path.Combine(workspace.Path, "dirty.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.True(create.Success, create.Message);
+        Assert.False(apply.Success);
+        Assert.Equal("Working tree is not clean.", apply.Message);
+    }
+
+    [Fact]
+    public void Undo_FailsWhenExtraDirtyPathsExistUnlessAllowed()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+
+        var packagePath = Path.Combine(workspace.Path, "undo-dirty.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+        File.WriteAllText(Path.Combine(target, "extra.txt"), "extra");
+
+        var undo = service.UndoLastApply(target);
+        var forcedUndo = service.UndoLastApply(target, allowDirty: true);
+
+        Assert.True(create.Success, create.Message);
+        Assert.True(apply.Success, apply.Message);
+        Assert.False(undo.Success);
+        Assert.Contains("changes outside", undo.Message);
+        Assert.True(forcedUndo.Success, forcedUndo.Message);
+        Assert.Equal("one", File.ReadAllText(Path.Combine(target, "hello.txt")));
+        Assert.True(File.Exists(Path.Combine(target, "extra.txt")));
+    }
+
     private static void InitializeRepository(string path)
     {
         Git(path, "init");
@@ -126,6 +259,25 @@ public class RpackPackageServiceTests
         {
             File.Copy(file, file.Replace(source, target, StringComparison.Ordinal));
         }
+    }
+
+    private static string ReadZipEntry(string packagePath, string entryPath)
+    {
+        using var archive = ZipFile.OpenRead(packagePath);
+        var entry = archive.GetEntry(entryPath) ?? throw new InvalidOperationException($"Missing entry: {entryPath}");
+        using var stream = entry.Open();
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    private static void ReplaceZipEntry(string packagePath, string entryPath, string content)
+    {
+        using var archive = ZipFile.Open(packagePath, ZipArchiveMode.Update);
+        archive.GetEntry(entryPath)?.Delete();
+        var entry = archive.CreateEntry(entryPath);
+        using var stream = entry.Open();
+        using var writer = new StreamWriter(stream);
+        writer.Write(content);
     }
 
     private sealed class TempWorkspace : IDisposable

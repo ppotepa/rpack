@@ -6,16 +6,13 @@ This roadmap is intentionally short. `rpack` should stay focused: validated patc
 
 - Keep the `rpack-v1` package format stable enough for local use.
 - Improve CLI errors and exit codes.
-- Add better `inspect` output, including changed file list and diffstat.
-- Add tests for invalid archives, checksum mismatch, dirty working trees, and unsafe paths.
+- Add tests for invalid archives and edge-case patches.
 - Document common workflows for humans and coding agents.
 
 ## 0.2.x - Distribution
 
-- Package as a .NET global tool.
-- Add version output with `rpack --version`.
 - Add release builds for Linux and macOS.
-- Add GitHub Actions CI.
+- Publish the .NET global tool to NuGet.
 - Automate GitHub release artifacts.
 
 ## 0.3.x - Better Patch Analysis

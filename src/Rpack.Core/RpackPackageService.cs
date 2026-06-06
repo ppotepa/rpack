@@ -115,10 +115,15 @@ public sealed class RpackPackageService
     {
         using var archive = ZipFile.OpenRead(packagePath);
         var manifest = ReadManifest(archive);
+        var changedFiles = manifest.Patches.Count == 0
+            ? []
+            : AnalyzePatch(ReadEntryText(archive, manifest.Patches[0].Path));
+
         return new PackageInspection
         {
             Manifest = manifest,
-            Entries = archive.Entries.Select(e => e.FullName).Order(StringComparer.Ordinal).ToArray()
+            Entries = archive.Entries.Select(e => e.FullName).Order(StringComparer.Ordinal).ToArray(),
+            ChangedFiles = changedFiles
         };
     }
 
@@ -224,6 +229,15 @@ public sealed class RpackPackageService
         if (!File.Exists(patchPath))
         {
             return RpackResult.Fail($"Stored patch is missing: {log.PatchPath}");
+        }
+
+        if (!allowDirty)
+        {
+            var dirtyCheck = EnsureNoChangesOutsidePatch(repository.RootPath, patchPath);
+            if (!dirtyCheck.Success)
+            {
+                return dirtyCheck;
+            }
         }
 
         var check = _gitClient.CheckReverseApply(repository.RootPath, patchPath);
@@ -365,6 +379,129 @@ public sealed class RpackPackageService
             && !path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries).Contains("..");
     }
 
+    private static string ReadEntryText(ZipArchive archive, string path)
+    {
+        if (!IsSafeArchivePath(path))
+        {
+            throw new InvalidOperationException($"Unsafe archive path: {path}");
+        }
+
+        var entry = archive.GetEntry(path) ?? throw new InvalidOperationException($"Archive entry is missing: {path}");
+        using var stream = entry.Open();
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    private static IReadOnlyList<PatchFileSummary> AnalyzePatch(string patch)
+    {
+        var files = new List<PatchFileSummaryBuilder>();
+        PatchFileSummaryBuilder? current = null;
+
+        foreach (var rawLine in patch.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            if (line.StartsWith("diff --git ", StringComparison.Ordinal))
+            {
+                AddCurrent();
+                current = new PatchFileSummaryBuilder
+                {
+                    Path = ParseDiffGitPath(line),
+                    Status = "modified"
+                };
+                continue;
+            }
+
+            if (current is null)
+            {
+                continue;
+            }
+
+            if (line.StartsWith("new file mode ", StringComparison.Ordinal))
+            {
+                current.Status = "added";
+            }
+            else if (line.StartsWith("deleted file mode ", StringComparison.Ordinal))
+            {
+                current.Status = "deleted";
+            }
+            else if (line.StartsWith("rename to ", StringComparison.Ordinal))
+            {
+                current.Status = "renamed";
+                current.Path = StripGitPath(line["rename to ".Length..]);
+            }
+            else if (line is "GIT binary patch" || line.StartsWith("Binary files ", StringComparison.Ordinal))
+            {
+                current.Status = current.Status is "added" or "deleted" ? current.Status : "binary";
+            }
+            else if (line.StartsWith('+') && !line.StartsWith("+++", StringComparison.Ordinal))
+            {
+                current.AddedLines++;
+            }
+            else if (line.StartsWith('-') && !line.StartsWith("---", StringComparison.Ordinal))
+            {
+                current.RemovedLines++;
+            }
+        }
+
+        AddCurrent();
+        return files
+            .Select(file => new PatchFileSummary
+            {
+                Path = file.Path,
+                Status = file.Status,
+                AddedLines = file.AddedLines,
+                RemovedLines = file.RemovedLines
+            })
+            .ToArray();
+
+        void AddCurrent()
+        {
+            if (current is not null && !string.IsNullOrWhiteSpace(current.Path))
+            {
+                files.Add(current);
+            }
+        }
+    }
+
+    private static string ParseDiffGitPath(string line)
+    {
+        var marker = " b/";
+        var index = line.LastIndexOf(marker, StringComparison.Ordinal);
+        return index < 0
+            ? line["diff --git ".Length..].Trim()
+            : StripGitPath(line[(index + marker.Length)..]);
+    }
+
+    private static string StripGitPath(string path)
+    {
+        path = path.Trim().Trim('"');
+        return path.StartsWith("b/", StringComparison.Ordinal) || path.StartsWith("a/", StringComparison.Ordinal)
+            ? path[2..]
+            : path;
+    }
+
+    private RpackResult EnsureNoChangesOutsidePatch(string repositoryPath, string patchPath)
+    {
+        var patchPaths = AnalyzePatch(File.ReadAllText(patchPath, Encoding.UTF8))
+            .Select(file => NormalizeGitPath(file.Path))
+            .ToHashSet(StringComparer.Ordinal);
+        var dirtyPaths = _gitClient.GetChangedPaths(repositoryPath)
+            .Select(NormalizeGitPath)
+            .ToArray();
+        var outsidePaths = dirtyPaths
+            .Where(path => !patchPaths.Contains(path))
+            .ToArray();
+
+        return outsidePaths.Length == 0
+            ? RpackResult.Ok("Working tree changes are limited to the last applied package.")
+            : RpackResult.Fail($"Working tree has changes outside the last applied package: {string.Join(", ", outsidePaths)}. Use --allow-dirty to undo anyway.");
+    }
+
+    private static string NormalizeGitPath(string path)
+    {
+        return path.Replace('\\', '/').Trim();
+    }
+
     private static void WriteEntry(ZipArchive archive, string path, string content)
     {
         var entry = archive.CreateEntry(path);
@@ -434,6 +571,14 @@ public sealed class RpackPackageService
     private static string GetRepositoryName(string rootPath)
     {
         return new DirectoryInfo(rootPath).Name;
+    }
+
+    private sealed class PatchFileSummaryBuilder
+    {
+        public string Path { get; set; } = "";
+        public string Status { get; set; } = "modified";
+        public int AddedLines { get; set; }
+        public int RemovedLines { get; set; }
     }
 
     private sealed class TempFile : IDisposable
