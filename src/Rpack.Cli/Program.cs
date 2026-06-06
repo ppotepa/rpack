@@ -14,7 +14,8 @@ if (string.IsNullOrWhiteSpace(command) || command is "-h" or "--help" or "help")
     return 0;
 }
 
-var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+var gitClient = new GitClient(new ProcessRunner());
+var service = new RpackPackageService(gitClient);
 
 try
 {
@@ -24,6 +25,7 @@ try
         "inspect" => RunInspect(args.Skip(1).ToArray(), service),
         "check" => RunCheck(args.Skip(1).ToArray(), service),
         "apply" => RunApply(args.Skip(1).ToArray(), service),
+        "open" => RunOpen(args.Skip(1).ToArray(), service, gitClient),
         "undo" => RunUndo(args.Skip(1).ToArray(), service),
         "history" => RunHistory(args.Skip(1).ToArray(), service),
         _ => Fail($"Unknown command: {command}")
@@ -140,6 +142,64 @@ static int RunApply(string[] args, RpackPackageService service)
     return PrintResult(result);
 }
 
+static int RunOpen(string[] args, RpackPackageService service, GitClient gitClient)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return Fail("Usage: rpack open <package.rpack> [repo]");
+    }
+
+    var packagePath = Path.GetFullPath(options.Positionals[0]);
+    var repositoryPath = ResolveOpenRepositoryArgument(options, gitClient, packagePath);
+    var allowDirty = options.Has("--allow-dirty");
+    var strictBase = options.Has("--strict-base");
+    var pathPrefix = options.Value("--path-prefix");
+    var allowedDirtyPaths = GetPackageDirtyException(repositoryPath, packagePath);
+
+    var inspection = service.Inspect(new InspectPackageOptions
+    {
+        PackagePath = packagePath,
+        PathPrefix = pathPrefix
+    });
+
+    PrintOpenSummary(inspection, repositoryPath, allowDirty, pathPrefix);
+
+    var check = service.Check(new CheckPackageOptions
+    {
+        PackagePath = packagePath,
+        RepositoryPath = repositoryPath,
+        AllowDirty = allowDirty,
+        StrictBase = strictBase,
+        PathPrefix = pathPrefix,
+        AllowedDirtyPaths = allowedDirtyPaths
+    });
+
+    if (!check.Success)
+    {
+        return PrintResult(check);
+    }
+
+    Console.WriteLine(check.Message);
+    if (!options.Has("--yes") && !Confirm("Apply this package?"))
+    {
+        Console.WriteLine("Cancelled.");
+        return 0;
+    }
+
+    var apply = service.Apply(new ApplyPackageOptions
+    {
+        PackagePath = packagePath,
+        RepositoryPath = repositoryPath,
+        AllowDirty = allowDirty,
+        StrictBase = strictBase,
+        PathPrefix = pathPrefix,
+        AllowedDirtyPaths = allowedDirtyPaths
+    });
+
+    return PrintResult(apply);
+}
+
 static int RunUndo(string[] args, RpackPackageService service)
 {
     var options = CliOptions.Parse(args);
@@ -180,6 +240,89 @@ static string ResolveRepositoryArgument(CliOptions options, int positionalOffset
         ?? (options.Positionals.Count > positionalOffset ? options.Positionals[positionalOffset] : Directory.GetCurrentDirectory());
 }
 
+static string ResolveOpenRepositoryArgument(CliOptions options, GitClient gitClient, string packagePath)
+{
+    var explicitRepository = options.Value("--repo")
+        ?? (options.Positionals.Count > 1 ? options.Positionals[1] : null);
+    if (!string.IsNullOrWhiteSpace(explicitRepository))
+    {
+        return explicitRepository;
+    }
+
+    var packageRepository = gitClient.FindRepositoryFrom(packagePath);
+    if (packageRepository is not null)
+    {
+        return packageRepository.RootPath;
+    }
+
+    var currentRepository = gitClient.FindRepositoryFrom(Directory.GetCurrentDirectory());
+    if (currentRepository is not null)
+    {
+        return currentRepository.RootPath;
+    }
+
+    throw new InvalidOperationException("Could not find a Git repository from the package location or current directory. Use --repo <repo>.");
+}
+
+static IReadOnlyList<string> GetPackageDirtyException(string repositoryPath, string packagePath)
+{
+    var repositoryRoot = Path.GetFullPath(repositoryPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    var fullPackagePath = Path.GetFullPath(packagePath);
+    var comparison = OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase
+        : StringComparison.Ordinal;
+    var repositoryPrefix = repositoryRoot + Path.DirectorySeparatorChar;
+    if (!fullPackagePath.StartsWith(repositoryPrefix, comparison))
+    {
+        return [];
+    }
+
+    var relativePath = Path.GetRelativePath(repositoryRoot, fullPackagePath)
+        .Replace('\\', '/');
+    return relativePath.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(relativePath)
+        ? []
+        : [relativePath];
+}
+
+static void PrintOpenSummary(PackageInspection inspection, string repositoryPath, bool allowDirty, string? pathPrefix)
+{
+    Console.WriteLine($"{inspection.Manifest.Title} ({inspection.Manifest.Id})");
+    Console.WriteLine($"packageId: {inspection.Manifest.Id}");
+    Console.WriteLine($"mode: {inspection.Manifest.Mode}");
+    Console.WriteLine($"targetRepository: {repositoryPath}");
+    Console.WriteLine($"patches: {inspection.Manifest.Patches.Count}");
+    Console.WriteLine($"changedFiles: {inspection.ChangedFiles.Count}");
+    Console.WriteLine($"addedLines: {inspection.AddedLines}");
+    Console.WriteLine($"removedLines: {inspection.RemovedLines}");
+    Console.WriteLine($"allowDirty: {allowDirty}");
+    if (!string.IsNullOrWhiteSpace(pathPrefix))
+    {
+        Console.WriteLine($"pathPrefix: {pathPrefix}");
+    }
+
+    if (inspection.ChangedFiles.Count > 0)
+    {
+        Console.WriteLine("patch:");
+        foreach (var file in inspection.ChangedFiles.Take(20))
+        {
+            Console.WriteLine($"  {file.Status,-8} +{file.AddedLines,-4} -{file.RemovedLines,-4} {file.Path}");
+        }
+
+        if (inspection.ChangedFiles.Count > 20)
+        {
+            Console.WriteLine($"  ... {inspection.ChangedFiles.Count - 20} more file(s)");
+        }
+    }
+}
+
+static bool Confirm(string prompt)
+{
+    Console.Write($"{prompt} [y/N] ");
+    var answer = Console.ReadLine();
+    return string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase);
+}
+
 static int PrintResult(RpackResult result)
 {
     var output = result.Success ? Console.Out : Console.Error;
@@ -205,6 +348,7 @@ static void PrintHelp()
       rpack inspect <package.rpack> [--path-prefix <prefix>]
       rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>]
       rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>]
+      rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--yes]
       rpack undo [repo] [--allow-dirty]
       rpack history [repo]
       rpack --version

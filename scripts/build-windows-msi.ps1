@@ -1,5 +1,5 @@
 param(
-    [string] $Version = "0.1.4",
+    [string] $Version = "0.1.5",
     [string] $Runtime = "win-x64",
     [string] $Configuration = "Release",
     [string] $OutputDirectory = "artifacts"
@@ -25,6 +25,17 @@ if (Test-Path $publishDir) {
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 
 dotnet publish (Join-Path $repoRoot "src/Rpack.Cli/Rpack.Cli.csproj") `
+    --configuration $Configuration `
+    --runtime $Runtime `
+    --self-contained true `
+    -p:PublishSingleFile=true `
+    -p:PublishTrimmed=false `
+    -p:DebugType=None `
+    -p:DebugSymbols=false `
+    -p:Version=$Version `
+    --output $publishDir
+
+dotnet publish (Join-Path $repoRoot "src/Rpack.Open/Rpack.Open.csproj") `
     --configuration $Configuration `
     --runtime $Runtime `
     --self-contained true `

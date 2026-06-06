@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-06
+
+### Added
+
+- Added `rpack open` for a guided inspect/check/apply flow.
+- Added Windows `rpack-open.exe` launcher with MessageBox confirmation dialogs.
+- Added Shift-double-click dirty-tree mode for `.rpack` files installed through the MSI.
+- Added MSI `.rpack` file association and extended context-menu action for allowing dirty working trees.
+- Added repository discovery by walking upward from the package location.
+- Added a clean-tree exception for the clicked package file during `open`.
+
 ## [0.1.4] - 2026-06-06
 
 ### Added

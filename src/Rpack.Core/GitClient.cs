@@ -41,9 +41,30 @@ public sealed class GitClient
         return new GitRepository(rootPath, statePath);
     }
 
+    public GitRepository? FindRepositoryFrom(string startPath)
+    {
+        var path = Path.GetFullPath(startPath);
+        var directory = File.Exists(path)
+            ? Path.GetDirectoryName(path)
+            : path;
+
+        while (!string.IsNullOrWhiteSpace(directory))
+        {
+            var root = _processRunner.Run("git", ["rev-parse", "--show-toplevel"], directory);
+            if (root.Success)
+            {
+                return InspectRepository(directory);
+            }
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        return null;
+    }
+
     public RpackResult EnsureCleanWorkingTree(string repositoryPath)
     {
-        var result = _processRunner.Run("git", ["status", "--porcelain"], repositoryPath);
+        var result = _processRunner.Run("git", ["status", "--porcelain", "--untracked-files=all"], repositoryPath);
         if (!result.Success)
         {
             return RpackResult.Fail(result.CombinedOutput);
@@ -54,9 +75,24 @@ public sealed class GitClient
             : RpackResult.Fail("Working tree is not clean.");
     }
 
+    public RpackResult EnsureCleanWorkingTreeExcept(string repositoryPath, IReadOnlyList<string> allowedPaths)
+    {
+        var allowed = allowedPaths
+            .Select(NormalizeGitPath)
+            .ToHashSet(StringComparer.Ordinal);
+        var dirtyPaths = GetChangedPaths(repositoryPath)
+            .Select(NormalizeGitPath)
+            .Where(path => !allowed.Contains(path))
+            .ToArray();
+
+        return dirtyPaths.Length == 0
+            ? RpackResult.Ok("Working tree is clean except allowed package paths.")
+            : RpackResult.Fail("Working tree is not clean.");
+    }
+
     public IReadOnlyList<string> GetChangedPaths(string repositoryPath)
     {
-        var result = _processRunner.Run("git", ["status", "--porcelain"], repositoryPath);
+        var result = _processRunner.Run("git", ["status", "--porcelain", "--untracked-files=all"], repositoryPath);
         if (!result.Success)
         {
             throw new InvalidOperationException(result.CombinedOutput);
@@ -83,6 +119,11 @@ public sealed class GitClient
         return renameIndex >= 0
             ? path[(renameIndex + " -> ".Length)..].Trim().Trim('"')
             : path;
+    }
+
+    private static string NormalizeGitPath(string path)
+    {
+        return path.Replace('\\', '/').Trim();
     }
 
     public string ResolveCommit(string repositoryPath, string revision)

@@ -24,6 +24,11 @@ rpack check change.rpack
 rpack apply change.rpack
 ```
 
+On Windows, if rpack was installed from the MSI, the human can also place the
+`.rpack` file inside the target repository and double-click it. The Windows
+launcher performs inspect, checksum verification, `git apply --check`, and then
+asks for confirmation before applying.
+
 If the package paths are relative to a snapshot subdirectory rather than the Git
 root, tell the user to apply with `--path-prefix`. Example: if the snapshot root
 was `D:\repo\src` and Git root is `D:\repo`, patch paths like `aot/file.cs`
@@ -394,6 +399,25 @@ rpack inspect change.rpack
 rpack check change.rpack
 rpack apply change.rpack
 ```
+
+For an interactive terminal flow:
+
+```bash
+rpack open change.rpack
+```
+
+For the Windows MSI flow, put the `.rpack` file somewhere inside the target Git
+repository and double-click it. Normal double-click requires a clean working
+tree, except for the clicked `.rpack` file itself if it is untracked inside the
+repo. Holding Shift while double-clicking allows a dirty working tree, equivalent
+to:
+
+```bash
+rpack open change.rpack --allow-dirty
+```
+
+Agents should not ask users to use Shift/dirtied-tree mode unless existing local
+changes are intentional and relevant.
 
 If the package was built from a subdirectory snapshot, prefix the patch paths at
 runtime:

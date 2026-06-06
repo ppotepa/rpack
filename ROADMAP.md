@@ -8,6 +8,7 @@ This roadmap is intentionally short. `rpack` should stay focused: validated patc
 - Improve CLI errors and exit codes.
 - Add tests for invalid archives and edge-case patches.
 - Document common workflows for humans and coding agents.
+- Keep Windows double-click application as a thin safety wrapper over inspect/check/apply.
 
 ## 0.2.x - Distribution
 

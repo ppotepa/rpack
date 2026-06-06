@@ -253,6 +253,62 @@ public class RpackPackageServiceTests
     }
 
     [Fact]
+    public void GitClient_FindRepositoryFrom_WalksUpFromPackageLocation()
+    {
+        using var workspace = new TempWorkspace();
+        var repository = workspace.CreateDirectory("repo");
+        InitializeRepository(repository);
+
+        var nested = Path.Combine(repository, "incoming", "packages");
+        Directory.CreateDirectory(nested);
+        var packagePath = Path.Combine(nested, "change.rpack");
+        File.WriteAllText(packagePath, "");
+
+        var found = new GitClient(new ProcessRunner()).FindRepositoryFrom(packagePath);
+
+        Assert.NotNull(found);
+        Assert.Equal(Path.GetFullPath(repository), found.RootPath);
+    }
+
+    [Fact]
+    public void Check_AllowsExplicitPackageFileDirtyException()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+
+        var incoming = Path.Combine(target, "incoming");
+        Directory.CreateDirectory(incoming);
+        var packagePath = Path.Combine(incoming, "change.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+
+        var strictCheck = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+        var openCheck = service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target,
+            AllowedDirtyPaths = ["incoming/change.rpack"]
+        });
+
+        Assert.True(create.Success, create.Message);
+        Assert.False(strictCheck.Success);
+        Assert.Equal("Working tree is not clean.", strictCheck.Message);
+        Assert.True(openCheck.Success, openCheck.Message);
+    }
+
+    [Fact]
     public void Check_FailsWhenChecksumDoesNotMatch()
     {
         using var workspace = new TempWorkspace();

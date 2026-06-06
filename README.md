@@ -35,11 +35,13 @@ Implemented:
 - `manifest.json`
 - one or more ordered `git diff --binary` patches
 - `create`, `inspect`, `check`, `apply`, `undo`, `history`
+- `open` for guided package application
 - checksum verification
 - clean working tree requirement by default
 - `git apply --check` before apply
 - per-repository local state under Git metadata
 - patch summary in `inspect`
+- Windows `.rpack` file association through the MSI installer
 - .NET global tool package metadata
 - GitHub Actions CI
 - runtime path prefix mapping for packages built from repository subdirectory snapshots
@@ -59,7 +61,8 @@ Download the latest Windows MSI from the GitHub releases page:
 https://github.com/ppotepa/rpack/releases
 ```
 
-The MSI installs `rpack.exe` and adds the installation directory to `PATH`.
+The MSI installs `rpack.exe`, `rpack-open.exe`, associates `.rpack` files with
+rpack, and adds the installation directory to `PATH`.
 Open a new terminal after installation if `rpack` is not immediately found.
 
 You can also build from source:
@@ -83,7 +86,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.4
+.\scripts\build-windows-msi.ps1 -Version 0.1.5
 ```
 
 ## Usage
@@ -129,6 +132,21 @@ Apply a package to the current repository:
 rpack apply change.rpack
 ```
 
+Open a package with a guided inspect/check/apply flow:
+
+```bash
+rpack open change.rpack
+```
+
+`open` first looks for a Git repository by walking upward from the `.rpack`
+file location. If the package is outside a repository, it falls back to the
+current directory or an explicit repo argument:
+
+```bash
+rpack open change.rpack ./repo
+rpack open change.rpack --repo ./repo
+```
+
 Check or apply to an explicit repository:
 
 ```bash
@@ -165,6 +183,35 @@ Print the installed version:
 rpack --version
 ```
 
+## Windows Double-Click
+
+The Windows MSI registers `.rpack` files with `rpack-open.exe`.
+
+When a package is double-clicked, rpack:
+
+- finds the target Git repository from the package location
+- inspects the package
+- verifies checksums
+- runs `git apply --check`
+- shows a confirmation dialog
+- applies only after explicit confirmation
+
+Normal double-click keeps the default safety model and requires a clean working
+tree. The clicked `.rpack` file itself is ignored for this clean-tree check when
+it is stored inside the target repository, so an untracked incoming package does
+not block its own application.
+
+Hold Shift while double-clicking to open the same package with dirty working
+tree allowed. This only enables the equivalent of:
+
+```bash
+rpack open change.rpack --allow-dirty
+```
+
+It does not bypass checksum verification, dry-run apply, or strict base behavior
+when `--strict-base` is used. The context menu also includes an extended
+Shift-right-click action named `Apply with rpack allowing dirty`.
+
 ## LLM Agents
 
 If you want a coding agent such as ChatGPT or Codex to return changes as an `.rpack` file, see [LLM_AGENTS.md](LLM_AGENTS.md).
@@ -192,6 +239,7 @@ Use `--allow-dirty` only when applying into a dirty working tree is intentional:
 
 ```bash
 rpack apply change.rpack --allow-dirty
+rpack open change.rpack --allow-dirty
 ```
 
 `rpack undo` blocks extra dirty paths by default and allows them only with:
@@ -289,6 +337,7 @@ Project layout:
 src/
   Rpack.Cli/
   Rpack.Core/
+  Rpack.Open/
 tests/
   Rpack.Tests/
 ```

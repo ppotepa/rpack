@@ -162,7 +162,9 @@ public sealed class RpackPackageService
         var repository = _gitClient.InspectRepository(options.RepositoryPath);
         if (manifest.RequiresCleanTree && !options.AllowDirty)
         {
-            var clean = _gitClient.EnsureCleanWorkingTree(repository.RootPath);
+            var clean = options.AllowedDirtyPaths.Count > 0
+                ? _gitClient.EnsureCleanWorkingTreeExcept(repository.RootPath, options.AllowedDirtyPaths)
+                : _gitClient.EnsureCleanWorkingTree(repository.RootPath);
             if (!clean.Success)
             {
                 return clean;
@@ -194,7 +196,8 @@ public sealed class RpackPackageService
             RepositoryPath = options.RepositoryPath,
             AllowDirty = options.AllowDirty,
             StrictBase = options.StrictBase,
-            PathPrefix = options.PathPrefix
+            PathPrefix = options.PathPrefix,
+            AllowedDirtyPaths = options.AllowedDirtyPaths
         });
 
         if (!check.Success)
@@ -915,6 +918,7 @@ public sealed class CheckPackageOptions
     public bool AllowDirty { get; init; }
     public bool StrictBase { get; init; }
     public string? PathPrefix { get; init; }
+    public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
 }
 
 public sealed class ApplyPackageOptions
@@ -924,6 +928,7 @@ public sealed class ApplyPackageOptions
     public bool AllowDirty { get; init; }
     public bool StrictBase { get; init; }
     public string? PathPrefix { get; init; }
+    public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
 }
 
 public sealed class InspectPackageOptions
