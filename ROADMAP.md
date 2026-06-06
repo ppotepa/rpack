@@ -14,9 +14,9 @@ This roadmap is intentionally short. `rpack` should stay focused: validated patc
 
 - Package as a .NET global tool.
 - Add version output with `rpack --version`.
-- Add release builds for Windows, Linux, and macOS.
+- Add release builds for Linux and macOS.
 - Add GitHub Actions CI.
-- Add GitHub release artifacts.
+- Automate GitHub release artifacts.
 
 ## 0.3.x - Better Patch Analysis
 

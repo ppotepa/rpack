@@ -50,7 +50,15 @@ Not implemented yet:
 
 ## Install
 
-For now, build from source:
+Download the latest Windows MSI from the GitHub releases page:
+
+```txt
+https://github.com/ppotepa/rpack/releases
+```
+
+The MSI installs `rpack.exe` and adds the installation directory to `PATH`.
+
+You can also build from source:
 
 ```bash
 dotnet build
@@ -63,6 +71,11 @@ dotnet run --project src/Rpack.Cli -- create -o change.rpack
 ```
 
 Later releases should provide a .NET global tool and standalone binaries.
+Build a Windows MSI locally:
+
+```powershell
+.\scripts\build-windows-msi.ps1 -Version 0.1.1
+```
 
 ## Usage
 
@@ -231,3 +244,7 @@ See [ROADMAP.md](ROADMAP.md).
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

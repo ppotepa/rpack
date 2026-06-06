@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.1.1] - 2026-06-06
+
+### Added
+
+- Added MIT license.
+- Added Windows MSI installer definition.
+- Added `scripts/build-windows-msi.ps1`.
+- Added release metadata to `Rpack.Cli.csproj`.
+
 ## [0.1.0] - 2026-06-06
 
 Initial MVP.
