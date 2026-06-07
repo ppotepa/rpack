@@ -18,6 +18,8 @@ change package + diagnostics + idempotency + validation + semantic operations
 
 ## Batch 001 - Diagnostics + Quality Gate
 
+- `inspect` now parses all patches in `Patches` and reports complete summary + per-file/per-patch statistics before apply. This helps quickly validate scope and suspiciously small/largely whitespace-only updates.
+
 - Add `rpack diagnose` for non-mutating check reports with likely causes and suggested fixes.
 - Add `rpack lint` for package safety checks.
 - Detect generated output, `.rpack` files, common secrets, and local machine paths.

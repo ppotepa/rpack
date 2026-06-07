@@ -44,7 +44,7 @@ Implemented:
 - clean working tree requirement by default
 - `git apply --check` before apply
 - per-repository local state under Git metadata
-- patch summary in `inspect`
+- detailed package summary and per-patch/per-file diff stats in `inspect`
 - Windows `.rpack` file association through the MSI installer
 - .NET global tool package metadata
 - GitHub Actions CI
@@ -87,10 +87,10 @@ Build a local .NET tool package:
 dotnet pack src/Rpack.Cli -c Release
 ```
 
-Build a Windows MSI locally:
+Build Windows MSI locally (both variants at once):
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.15
+.\scripts\build-windows-msi.ps1 -Version 0.1.16
 ```
 
 This creates two installers:
@@ -101,8 +101,8 @@ This creates two installers:
 Build only one variant when needed:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.15 -Variant framework-dependent
-.\scripts\build-windows-msi.ps1 -Version 0.1.15 -Variant self-contained
+.\scripts\build-windows-msi.ps1 -Version 0.1.16 -Variant framework-dependent
+.\scripts\build-windows-msi.ps1 -Version 0.1.16 -Variant self-contained
 ```
 
 ## Usage
@@ -133,8 +133,32 @@ Inspect a package without applying it:
 rpack inspect change.rpack
 ```
 
-`inspect` shows package metadata, changed file count, added/removed line counts,
-and a short per-file patch summary.
+`inspect` now shows a full patch breakdown:
+
+- total file/line/hunk counts
+- per-patch summaries
+- per-file +/− lines, hunk counts, and category (Code/Tests/Docs/Scripts/Assets/Other)
+
+Example:
+
+```txt
+Package summary:
+- patches: 3
+- files changed: 18
+- lines added: 1240
+- lines removed: 310
+- total diff hunks: 86
+- binary files: 0
+```
+
+Then for each patch:
+
+```txt
+PATCH 004 — InkFrame
+- DefaultBuildInkFrameStep.cs +280 / -90 h:8 Code
+- ... 
+Subtotal: +420 -90 hunks:12
+```
 
 Check whether a package applies to the current repository:
 

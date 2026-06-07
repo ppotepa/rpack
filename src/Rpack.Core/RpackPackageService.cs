@@ -166,15 +166,32 @@ public sealed class RpackPackageService
         var pathPrefix = NormalizePathPrefix(options.PathPrefix);
         using var archive = ZipFile.OpenRead(options.PackagePath);
         var manifest = ReadManifest(archive);
-        var changedFiles = manifest.Patches
-            .SelectMany(patch => AnalyzePatch(RewritePatchPaths(ReadEntryText(archive, patch.Path), pathPrefix)))
-            .ToArray();
+        var patchStats = new List<RpackPatchDiffStats>();
+        var changedFiles = new List<RpackFileDiffStats>();
+        for (var index = 0; index < manifest.Patches.Count; index++)
+        {
+            var patch = manifest.Patches[index];
+            var patchContent = RewritePatchPaths(ReadEntryText(archive, patch.Path), pathPrefix);
+            var files = AnalyzePatch(patchContent);
+            changedFiles.AddRange(files);
+            patchStats.Add(BuildPatchDiffStats(index + 1, patch, files));
+        }
 
         return new PackageInspection
         {
             Manifest = manifest,
             Entries = archive.Entries.Select(e => e.FullName).Order(StringComparer.Ordinal).ToArray(),
-            ChangedFiles = changedFiles
+            ChangedFiles = changedFiles,
+            DiffStats = new RpackDiffStats
+            {
+                PatchCount = patchStats.Count,
+                FileCount = changedFiles.Count,
+                AddedLines = changedFiles.Sum(file => file.AddedLines),
+                RemovedLines = changedFiles.Sum(file => file.RemovedLines),
+                HunkCount = changedFiles.Sum(file => file.HunkCount),
+                BinaryFileCount = changedFiles.Count(file => file.IsBinary),
+                Patches = patchStats
+            }
         };
     }
 
@@ -896,7 +913,7 @@ public sealed class RpackPackageService
         }
     }
 
-    private static void AddQualityLintIssues(List<LintIssue> issues, string patchPath, string patchContent, IReadOnlyList<PatchFileSummary> changedFiles)
+    private static void AddQualityLintIssues(List<LintIssue> issues, string patchPath, string patchContent, IReadOnlyList<RpackFileDiffStats> changedFiles)
     {
         foreach (var file in changedFiles)
         {
@@ -1085,7 +1102,7 @@ public sealed class RpackPackageService
         return reader.ReadToEnd();
     }
 
-    private static IReadOnlyList<PatchFileSummary> AnalyzePatch(string patch)
+    private static IReadOnlyList<RpackFileDiffStats> AnalyzePatch(string patch)
     {
         var files = new List<PatchFileSummaryBuilder>();
         PatchFileSummaryBuilder? current = null;
@@ -1099,7 +1116,8 @@ public sealed class RpackPackageService
                 current = new PatchFileSummaryBuilder
                 {
                     Path = ParseDiffGitPath(line),
-                    Status = "modified"
+                    Status = "Modified",
+                    Category = ClassifyPath(ParseDiffGitPath(line))
                 };
                 continue;
             }
@@ -1111,20 +1129,29 @@ public sealed class RpackPackageService
 
             if (line.StartsWith("new file mode ", StringComparison.Ordinal))
             {
-                current.Status = "added";
+                current.Status = "Added";
             }
             else if (line.StartsWith("deleted file mode ", StringComparison.Ordinal))
             {
-                current.Status = "deleted";
+                current.Status = "Deleted";
             }
             else if (line.StartsWith("rename to ", StringComparison.Ordinal))
             {
-                current.Status = "renamed";
+                current.Status = "Renamed";
                 current.Path = StripGitPath(line["rename to ".Length..]);
+                current.Category = ClassifyPath(current.Path);
+            }
+            else if (line.StartsWith("@@ ", StringComparison.Ordinal))
+            {
+                current.HunkCount++;
             }
             else if (line is "GIT binary patch" || line.StartsWith("Binary files ", StringComparison.Ordinal))
             {
-                current.Status = current.Status is "added" or "deleted" ? current.Status : "binary";
+                current.IsBinary = true;
+                if (current.Status is not ("Added" or "Deleted"))
+                {
+                    current.Status = "Modified";
+                }
             }
             else if (line.StartsWith('+') && !line.StartsWith("+++", StringComparison.Ordinal))
             {
@@ -1138,12 +1165,15 @@ public sealed class RpackPackageService
 
         AddCurrent();
         return files
-            .Select(file => new PatchFileSummary
+            .Select(file => new RpackFileDiffStats
             {
                 Path = file.Path,
                 Status = file.Status,
                 AddedLines = file.AddedLines,
-                RemovedLines = file.RemovedLines
+                RemovedLines = file.RemovedLines,
+                HunkCount = file.HunkCount,
+                IsBinary = file.IsBinary,
+                Category = file.Category
             })
             .ToArray();
 
@@ -1190,6 +1220,79 @@ public sealed class RpackPackageService
         return string.IsNullOrWhiteSpace(pathPrefix)
             ? ""
             : pathPrefix.Replace('\\', '/').Trim().Trim('/');
+    }
+
+    private static string BuildPatchTitle(RpackPatch patch, int patchNumber)
+    {
+        var name = Path.GetFileNameWithoutExtension(patch.Path);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return $"PATCH {patchNumber:D3}";
+        }
+
+        var numberMatch = Regex.Match(name, @"^(?<number>\d+)");
+        var title = name;
+        if (numberMatch.Success)
+        {
+            title = name[numberMatch.Length..];
+            if (title.StartsWith("-", StringComparison.Ordinal) || title.StartsWith("_", StringComparison.Ordinal))
+            {
+                title = title[1..];
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return $"PATCH {patchNumber:D3}";
+        }
+
+        var normalized = char.ToUpperInvariant(title[0]) + title[1..];
+        return $"PATCH {patchNumber:D3} — {normalized}";
+    }
+
+    private static RpackPatchDiffStats BuildPatchDiffStats(int index, RpackPatch patch, IReadOnlyList<RpackFileDiffStats> files)
+    {
+        return new RpackPatchDiffStats
+        {
+            PatchPath = patch.Path,
+            Title = BuildPatchTitle(patch, index),
+            FileCount = files.Count,
+            AddedLines = files.Sum(file => file.AddedLines),
+            RemovedLines = files.Sum(file => file.RemovedLines),
+            HunkCount = files.Sum(file => file.HunkCount),
+            Files = files
+                .Select(file => new RpackFileDiffStats
+                {
+                    Path = file.Path,
+                    Status = file.Status,
+                    AddedLines = file.AddedLines,
+                    RemovedLines = file.RemovedLines,
+                    HunkCount = file.HunkCount,
+                    IsBinary = file.IsBinary,
+                    Category = file.Category
+                })
+                .ToArray()
+        };
+    }
+
+    private static string ClassifyPath(string path)
+    {
+        var normalizedPath = path.Replace('\\', '/').ToLowerInvariant();
+
+        if (normalizedPath.Contains("/test/", StringComparison.Ordinal) || normalizedPath.Contains("/tests/", StringComparison.Ordinal))
+        {
+            return "Tests";
+        }
+
+        var extension = Path.GetExtension(normalizedPath);
+        return extension switch
+        {
+            ".cs" or ".csproj" or ".sln" or ".slnx" => "Code",
+            ".md" or ".txt" or ".json" or ".yml" or ".yaml" or ".xml" => "Docs",
+            ".ps1" or ".sh" or ".bash" or ".cmd" or ".bat" => "Scripts",
+            ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".svg" => "Assets",
+            _ => normalizedPath.Contains("/assets/") || normalizedPath.Contains("/artifacts/") || normalizedPath.Contains("/release/") ? "Assets" : "Other"
+        };
     }
 
     private static string RewritePatchPaths(string patch, string pathPrefix)
@@ -1433,6 +1536,9 @@ public sealed class RpackPackageService
         public string Status { get; set; } = "modified";
         public int AddedLines { get; set; }
         public int RemovedLines { get; set; }
+        public int HunkCount { get; set; }
+        public bool IsBinary { get; set; }
+        public string Category { get; set; } = "Other";
     }
 
     private sealed record AddedTextFile(string Path, string Content);

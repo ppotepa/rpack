@@ -147,7 +147,8 @@ internal sealed class OpenBatchForm : Form
         _list.Columns.Add("Repo", 230);
         _list.Columns.Add("Patches", 70);
         _list.Columns.Add("Files", 60);
-        _list.Columns.Add("Lines", 80);
+        _list.Columns.Add("Lines", 90);
+        _list.Columns.Add("Hunks", 60);
         _list.Columns.Add("Mode", 120);
         _list.Columns.Add("Message", 420);
         _list.SelectedIndexChanged += (_, _) => RefreshDetails();
@@ -551,8 +552,9 @@ internal sealed class OpenBatchForm : Form
                 item.SubItems.Add(job.Inspection?.Manifest.Title ?? "");
                 item.SubItems.Add(ShortenPath(job.RepositoryPath ?? job.RepositoryOption ?? ""));
                 item.SubItems.Add(job.Inspection?.Manifest.Patches.Count.ToString() ?? "");
-                item.SubItems.Add(job.Inspection?.ChangedFiles.Count.ToString() ?? "");
-                item.SubItems.Add(job.Inspection is null ? "" : $"+{job.Inspection.AddedLines} -{job.Inspection.RemovedLines}");
+                item.SubItems.Add(job.Inspection?.DiffStats.FileCount.ToString() ?? "");
+                item.SubItems.Add(job.Inspection is null ? "" : $"+{job.Inspection.DiffStats.AddedLines} -{job.Inspection.DiffStats.RemovedLines}");
+                item.SubItems.Add(job.Inspection?.DiffStats.HunkCount.ToString() ?? "");
                 item.SubItems.Add(BuildModeText(job));
                 item.SubItems.Add(job.Message);
                 _list.Items.Add(item);
@@ -659,11 +661,30 @@ internal sealed class OpenBatchForm : Form
     private static string BuildSuccessDetails(PackageJob job, string stage, string message)
     {
         var inspection = job.Inspection;
-        var changedFiles = inspection?.ChangedFiles.Take(80)
-            .Select(file => $"  {file.Status,-8} +{file.AddedLines,-4} -{file.RemovedLines,-4} {file.Path}")
-            .ToArray() ?? [];
-        var more = inspection is not null && inspection.ChangedFiles.Count > changedFiles.Length
-            ? $"{Environment.NewLine}  ... {inspection.ChangedFiles.Count - changedFiles.Length} more file(s)"
+        if (inspection is null)
+        {
+            return "";
+        }
+
+        var patchSummaries = inspection.DiffStats.Patches
+            .Select(
+                patch =>
+                    $"{patch.Title}{Environment.NewLine}" +
+                    string.Join(
+                        Environment.NewLine,
+                        patch.Files.Select(file => $"  {file.Status,-8} +{file.AddedLines,-5} -{file.RemovedLines,-5} h:{file.HunkCount,-3} {file.Category,-8} {file.Path}")) +
+                    $"{Environment.NewLine}  Subtotal: +{patch.AddedLines} -{patch.RemovedLines} hunks:{patch.HunkCount}");
+
+        var patchText = patchSummaries.Any()
+            ? string.Join(Environment.NewLine + Environment.NewLine, patchSummaries)
+            : "No patch changes detected.";
+
+        var changedFiles = inspection.ChangedFiles
+            .OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(file => $"  {file.Status,-8} +{file.AddedLines,-5} -{file.RemovedLines,-5} h:{file.HunkCount,-3} {file.Category,-8} {file.Path}");
+        var limited = changedFiles.Take(120).ToArray();
+        var more = inspection.ChangedFiles.Count > 120
+            ? $"{Environment.NewLine}  ... {inspection.ChangedFiles.Count - 120} more file(s)"
             : "";
 
         return $"""
@@ -678,15 +699,19 @@ internal sealed class OpenBatchForm : Form
             Result:
             {message.Trim()}
 
-            Manifest:
-            Id: {inspection?.Manifest.Id}
-            Title: {inspection?.Manifest.Title}
-            Patches: {inspection?.Manifest.Patches.Count}
-            Changed files: {inspection?.ChangedFiles.Count}
-            Lines: +{inspection?.AddedLines} -{inspection?.RemovedLines}
+            Package summary:
+            - patches: {inspection.DiffStats.PatchCount}
+            - files changed: {inspection.DiffStats.FileCount}
+            - lines added: {inspection.DiffStats.AddedLines}
+            - lines removed: {inspection.DiffStats.RemovedLines}
+            - total diff hunks: {inspection.DiffStats.HunkCount}
+            - binary files: {inspection.DiffStats.BinaryFileCount}
+
+            Patches:
+            {patchText}
 
             Files:
-            {string.Join(Environment.NewLine, changedFiles)}{more}
+            {string.Join(Environment.NewLine, limited)}{more}
             """;
     }
 

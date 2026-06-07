@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-06-07
+
+### Added
+
+- `inspect` now computes and surfaces full diff statistics from every patch in `manifest.Patches`:
+  - patch/file totals
+  - added and removed lines
+  - hunk counts
+  - binary file count
+  - per-patch file breakdown
+  - per-file +/− and hunk summary
+- `rpack-open` batch view now shows aggregate package summary and per-file file/hunk stats in status details.
+- `rpack` CLI now uses per-patch aggregated inspection for `inspect` and `open` output.
+
+### Changed
+
+- CLI/open output was updated to treat multi-patch manifests as ordered patch arrays (not just first/flattened file summaries) when producing changed-file stats.
+
 ## [0.1.15] - 2026-06-07
 
 ### Added

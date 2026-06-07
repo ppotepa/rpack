@@ -76,6 +76,8 @@ static int RunInspect(string[] args, RpackPackageService service)
         PackagePath = options.Positionals[0],
         PathPrefix = options.Value("--path-prefix")
     });
+    var diff = inspection.DiffStats;
+
     Console.WriteLine($"{inspection.Manifest.Title} ({inspection.Manifest.Id})");
     Console.WriteLine($"format: {inspection.Manifest.Format}");
     Console.WriteLine($"mode: {inspection.Manifest.Mode}");
@@ -84,12 +86,32 @@ static int RunInspect(string[] args, RpackPackageService service)
     Console.WriteLine($"sourceProjectPath: {inspection.Manifest.Source?.ProjectPath}");
     Console.WriteLine($"baseCommit: {inspection.Manifest.Source?.BaseCommit ?? inspection.Manifest.BaseCommit}");
     Console.WriteLine($"headCommit: {inspection.Manifest.Source?.HeadCommit}");
-    Console.WriteLine($"changedFiles: {inspection.ChangedFiles.Count}");
-    Console.WriteLine($"addedLines: {inspection.AddedLines}");
-    Console.WriteLine($"removedLines: {inspection.RemovedLines}");
-    if (inspection.ChangedFiles.Count > 0)
+    Console.WriteLine("Package summary:");
+    Console.WriteLine($"- patches: {diff.PatchCount}");
+    Console.WriteLine($"- files changed: {diff.FileCount}");
+    Console.WriteLine($"- lines added: {diff.AddedLines}");
+    Console.WriteLine($"- lines removed: {diff.RemovedLines}");
+    Console.WriteLine($"- total diff hunks: {diff.HunkCount}");
+    Console.WriteLine($"- binary files: {diff.BinaryFileCount}");
+
+    if (diff.Patches.Count > 0)
     {
-        Console.WriteLine("patch:");
+        Console.WriteLine();
+        Console.WriteLine("Patches:");
+        foreach (var patch in diff.Patches)
+        {
+            Console.WriteLine($"- {patch.Title} ({patch.PatchPath})");
+            foreach (var file in patch.Files)
+            {
+                var estimate = file.AddedLines + file.RemovedLines;
+                Console.WriteLine($"  {file.Status,-8} +{file.AddedLines,-4} -{file.RemovedLines,-4} h={file.HunkCount,-3} ~{estimate,-4} {file.Category,-8} {file.Path}");
+            }
+
+            Console.WriteLine($"  Subtotal: +{patch.AddedLines} -{patch.RemovedLines} hunks:{patch.HunkCount}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Per-file:");
         foreach (var file in inspection.ChangedFiles)
         {
             Console.WriteLine($"  {file.Status,-8} +{file.AddedLines,-4} -{file.RemovedLines,-4} {file.Path}");
@@ -357,14 +379,18 @@ static IReadOnlyList<string> GetPackageDirtyException(string repositoryPath, str
 
 static void PrintOpenSummary(PackageInspection inspection, string repositoryPath, bool allowDirty, bool ignoreSpaceChange, string? pathPrefix)
 {
+    var diff = inspection.DiffStats;
+
     Console.WriteLine($"{inspection.Manifest.Title} ({inspection.Manifest.Id})");
     Console.WriteLine($"packageId: {inspection.Manifest.Id}");
     Console.WriteLine($"mode: {inspection.Manifest.Mode}");
     Console.WriteLine($"targetRepository: {repositoryPath}");
-    Console.WriteLine($"patches: {inspection.Manifest.Patches.Count}");
-    Console.WriteLine($"changedFiles: {inspection.ChangedFiles.Count}");
-    Console.WriteLine($"addedLines: {inspection.AddedLines}");
-    Console.WriteLine($"removedLines: {inspection.RemovedLines}");
+    Console.WriteLine($"patches: {diff.PatchCount}");
+    Console.WriteLine($"files changed: {diff.FileCount}");
+    Console.WriteLine($"addedLines: {diff.AddedLines}");
+    Console.WriteLine($"removedLines: {diff.RemovedLines}");
+    Console.WriteLine($"hunks: {diff.HunkCount}");
+    Console.WriteLine($"binary files: {diff.BinaryFileCount}");
     Console.WriteLine($"allowDirty: {allowDirty}");
     Console.WriteLine($"patchContext: {(ignoreSpaceChange ? "whitespace-compatible" : "strict")}");
     if (!string.IsNullOrWhiteSpace(pathPrefix))
@@ -372,17 +398,17 @@ static void PrintOpenSummary(PackageInspection inspection, string repositoryPath
         Console.WriteLine($"pathPrefix: {pathPrefix}");
     }
 
-    if (inspection.ChangedFiles.Count > 0)
+    if (diff.Patches.Count > 0)
     {
+        Console.WriteLine();
         Console.WriteLine("patch:");
-        foreach (var file in inspection.ChangedFiles.Take(20))
+        foreach (var patch in diff.Patches)
         {
-            Console.WriteLine($"  {file.Status,-8} +{file.AddedLines,-4} -{file.RemovedLines,-4} {file.Path}");
-        }
-
-        if (inspection.ChangedFiles.Count > 20)
-        {
-            Console.WriteLine($"  ... {inspection.ChangedFiles.Count - 20} more file(s)");
+            Console.WriteLine($"  {patch.Title}");
+            foreach (var file in patch.Files)
+            {
+                Console.WriteLine($"    {file.Status,-8} +{file.AddedLines,-4} -{file.RemovedLines,-4} {file.Path}");
+            }
         }
     }
 }

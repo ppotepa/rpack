@@ -74,6 +74,15 @@ Inspect the package:
 rpack inspect change.rpack
 ```
 
+`inspect` should return:
+
+- patch count
+- files changed
+- added lines
+- removed lines
+- total diff hunks
+- per-patch and per-file breakdowns
+
 Lint the package before delivery:
 
 ```bash
@@ -412,9 +421,12 @@ When returning an `.rpack`, the agent should include:
 Package: change.rpack
 Format: rpack-v1
 Mode: working-tree-patch
+Patch count: <number>
 Changed files: <number>
 Added lines: <number>
 Removed lines: <number>
+Total hunks: <number>
+Binary files: <number>
 Validation:
 - rpack inspect: passed
 - rpack lint: passed/failed/not run
