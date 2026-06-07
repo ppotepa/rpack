@@ -27,6 +27,7 @@ try
         "diagnose" => RunDiagnose(args.Skip(1).ToArray(), service),
         "lint" => RunLint(args.Skip(1).ToArray(), service),
         "apply" => RunApply(args.Skip(1).ToArray(), service),
+        "rebase" => RunRebase(args.Skip(1).ToArray(), service),
         "open" => RunOpen(args.Skip(1).ToArray(), service, gitClient),
         "undo" => RunUndo(args.Skip(1).ToArray(), service),
         "history" => RunHistory(args.Skip(1).ToArray(), service),
@@ -142,6 +143,34 @@ static int RunCheck(string[] args, RpackPackageService service)
         AllowDirty = options.Has("--allow-dirty"),
         StrictBase = options.Has("--strict-base"),
         PathPrefix = options.Value("--path-prefix"),
+        AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
+        IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
+    });
+
+    return PrintResult(result);
+}
+
+static int RunRebase(string[] args, RpackPackageService service)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return Fail("Usage: rpack rebase <package.rpack> [repo] -o <package-rebased.rpack>");
+    }
+
+    var output = options.Value("-o") ?? options.Value("--output");
+    if (string.IsNullOrWhiteSpace(output))
+    {
+        return Fail("Missing output path. Use -o package-rebased.rpack.");
+    }
+
+    var result = service.Rebase(new RebasePackageOptions
+    {
+        PackagePath = options.Positionals[0],
+        RepositoryPath = ResolveRepositoryArgument(options),
+        OutputPath = output,
+        PathPrefix = options.Value("--path-prefix"),
+        AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
         IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
     });
 
@@ -163,6 +192,7 @@ static int RunApply(string[] args, RpackPackageService service)
         AllowDirty = options.Has("--allow-dirty"),
         StrictBase = options.Has("--strict-base"),
         PathPrefix = options.Value("--path-prefix"),
+        AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
         IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
     });
 
@@ -184,6 +214,7 @@ static int RunDiagnose(string[] args, RpackPackageService service)
         AllowDirty = options.Has("--allow-dirty"),
         StrictBase = options.Has("--strict-base"),
         PathPrefix = options.Value("--path-prefix"),
+        AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
         IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
     });
 
@@ -261,6 +292,7 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
         AllowDirty = allowDirty,
         StrictBase = strictBase,
         PathPrefix = pathPrefix,
+        AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
         AllowedDirtyPaths = allowedDirtyPaths,
         IgnoreSpaceChange = ignoreSpaceChange
     });
@@ -446,8 +478,9 @@ static void PrintHelp()
       rpack inspect <package.rpack> [--path-prefix <prefix>]
       rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
       rpack diagnose <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
+      rpack rebase <package.rpack> [repo] -o <package-rebased.rpack> [--path-prefix <prefix>] [--strict]
       rpack lint <package.rpack> [--path-prefix <prefix>]
-      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
+      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--resolve-added-file-conflicts <mode>] [--allow-existing-added-files <mode>]
       rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--yes]
       rpack undo [repo] [--allow-dirty]
       rpack history [repo]
@@ -465,6 +498,8 @@ static void PrintHelp()
       --strict               Require exact patch context whitespace.
       --strict-whitespace    Alias for --strict.
       --ignore-space-change  Compatibility no-op; this is the default mode.
+      --resolve-added-file-conflicts <mode>  How to resolve add-conflict: abort|skip|modify|overwrite.
+      --allow-existing-added-files <mode>    Alias for --resolve-added-file-conflicts.
     """);
 }
 
@@ -477,6 +512,13 @@ static bool ResolveIgnoreSpaceChange(CliOptions options)
     }
 
     return !strictWhitespace;
+}
+
+static string ResolveAddedFileConflictResolution(CliOptions options)
+{
+    return options.Value("--resolve-added-file-conflicts")
+        ?? options.Value("--allow-existing-added-files")
+        ?? "abort";
 }
 
 static void PrintVersion()
@@ -502,6 +544,8 @@ internal sealed class CliOptions
         "--id",
         "--title",
         "--description",
+        "--resolve-added-file-conflicts",
+        "--allow-existing-added-files",
         "--path-prefix"
     };
 

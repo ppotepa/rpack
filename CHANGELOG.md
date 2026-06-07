@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-06-07
+
+### Added
+
+- Added `rpack rebase` for rewriting existing packages against the current target repository working tree and producing a new package.
+- Added conflict policy options for already-present added files in `check` and `apply`:
+  - `--resolve-added-file-conflicts <abort|skip|modify|overwrite>`
+  - `--allow-existing-added-files <same>`
+  - `as-modify` is accepted as an alias of `modify`.
+- Added automatic `ADD`-to-`MODIFY` rewrite during package application when a new-file patch conflicts with an existing file and policy allows conversion.
+
+### Changed
+
+- Rebase and add-conflict handling are now exposed and documented in CLI usage and README.
+- `rpack` still does not alter git history; `rebase` rewrites patch content only.
+
 ## [0.1.16] - 2026-06-07
 
 ### Added

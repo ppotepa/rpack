@@ -6,12 +6,13 @@
 
 **Repository Pack**: portable, validated patch packages for Git working trees.
 
-`rpack` is a small CLI tool for moving code changes between repositories as a single `.rpack` file. It does not create commits, branches, tags, rebases, or otherwise modify Git history. It only validates and applies patches to the working tree.
+`rpack` is a small CLI tool for moving code changes between repositories as a single `.rpack` file. It does not create commits, branches, or otherwise modify Git history. It only validates and applies patches to the working tree.
 
 ```bash
 rpack create -o change.rpack
 rpack inspect change.rpack
 rpack check change.rpack
+rpack rebase change.rpack
 rpack apply change.rpack
 rpack undo
 ```
@@ -38,7 +39,7 @@ Implemented:
 - `.rpack` as ZIP
 - `manifest.json`
 - one or more ordered `git diff --binary` patches
-- `create`, `inspect`, `check`, `apply`, `undo`, `history`
+- `create`, `inspect`, `check`, `rebase`, `apply`, `undo`, `history`
 - `open` for guided package application
 - checksum verification
 - clean working tree requirement by default
@@ -90,7 +91,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build Windows MSI locally (both variants at once):
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.16
+.\scripts\build-windows-msi.ps1 -Version 0.1.17
 ```
 
 This creates two installers:
@@ -101,8 +102,8 @@ This creates two installers:
 Build only one variant when needed:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.16 -Variant framework-dependent
-.\scripts\build-windows-msi.ps1 -Version 0.1.16 -Variant self-contained
+.\scripts\build-windows-msi.ps1 -Version 0.1.17 -Variant framework-dependent
+.\scripts\build-windows-msi.ps1 -Version 0.1.17 -Variant self-contained
 ```
 
 ## Usage
@@ -125,6 +126,12 @@ Create a package from a revision range, still as a working tree patch:
 
 ```bash
 rpack create --from HEAD~2 --to HEAD -o change.rpack
+```
+
+Rebase a package against another repository working tree:
+
+```bash
+rpack rebase change.rpack ./other-repo -o change-rebased.rpack
 ```
 
 Inspect a package without applying it:
@@ -184,6 +191,17 @@ Apply a package to the current repository:
 ```bash
 rpack apply change.rpack
 ```
+
+Handle existing-file add conflicts explicitly when needed:
+
+```bash
+rpack apply change.rpack --allow-existing-added-files modify
+rpack apply change.rpack --resolve-added-file-conflicts as-modify
+rpack apply change.rpack --allow-existing-added-files skip
+rpack apply change.rpack --allow-existing-added-files overwrite
+```
+
+By default, `rpack` fails on added-file conflicts (`abort`).
 
 Open a package with a guided inspect/check/apply flow:
 

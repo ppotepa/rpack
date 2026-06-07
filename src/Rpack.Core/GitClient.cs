@@ -180,6 +180,17 @@ public sealed class GitClient
         return result.StandardOutput;
     }
 
+    public string CreateNoIndexDiff(string repositoryPath, string leftPath, string rightPath)
+    {
+        var result = _processRunner.Run("git", ["diff", "--binary", "--no-index", "--", leftPath, rightPath], repositoryPath);
+        if (!result.Success && result.ExitCode != 1)
+        {
+            throw new InvalidOperationException(result.CombinedOutput);
+        }
+
+        return result.StandardOutput;
+    }
+
     public string CreateWorkingTreeDiff(string repositoryPath)
     {
         var result = _processRunner.Run("git", ["diff", "--binary"], repositoryPath);
@@ -286,6 +297,44 @@ public sealed class GitClient
         return result.Success
             ? RpackResult.Ok("Patch reverted.")
             : RpackResult.Fail(result.CombinedOutput);
+    }
+
+    public string CreateDetachedWorktree(string repositoryPath)
+    {
+        var temporaryWorktreePath = Path.Combine(Path.GetTempPath(), $"rpack-worktree-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryWorktreePath);
+        var result = _processRunner.Run("git", ["worktree", "add", "--detach", temporaryWorktreePath, "HEAD"], repositoryPath);
+        if (!result.Success)
+        {
+            Directory.Delete(temporaryWorktreePath, recursive: true);
+            throw new InvalidOperationException(result.CombinedOutput);
+        }
+
+        return temporaryWorktreePath;
+    }
+
+    public RpackResult RemoveDetachedWorktree(string repositoryPath, string worktreePath)
+    {
+        if (string.IsNullOrWhiteSpace(worktreePath))
+        {
+            return RpackResult.Ok("No worktree path provided.");
+        }
+
+        var result = _processRunner.Run("git", ["worktree", "remove", "--force", worktreePath], repositoryPath);
+        if (!result.Success)
+        {
+            try
+            {
+                Directory.Delete(worktreePath, recursive: true);
+                return RpackResult.Ok("Worktree removed.");
+            }
+            catch
+            {
+                return RpackResult.Fail(result.CombinedOutput);
+            }
+        }
+
+        return RpackResult.Ok("Worktree removed.");
     }
 }
 

@@ -203,6 +203,11 @@ public sealed class RpackPackageService
             return pathPrefixResult;
         }
 
+        if (!TryParseAddedFileConflictResolution(options.AddedFileConflictResolution, out var addedFileConflictResolution, out var parseFailure))
+        {
+            return parseFailure;
+        }
+
         var pathPrefix = NormalizePathPrefix(options.PathPrefix);
         using var archive = ZipFile.OpenRead(options.PackagePath);
         var manifest = ReadManifest(archive);
@@ -236,7 +241,13 @@ public sealed class RpackPackageService
             return RpackResult.Fail(baseWarning);
         }
 
-        var applyCheck = CheckPatchesInOrder(archive, manifest, repository.RootPath, pathPrefix, options.IgnoreSpaceChange);
+        var applyCheck = CheckPatchesInOrder(
+            archive,
+            manifest,
+            repository.RootPath,
+            pathPrefix,
+            options.IgnoreSpaceChange,
+            options.AddedFileConflictResolution);
         if (!applyCheck.Success)
         {
             return applyCheck;
@@ -270,6 +281,7 @@ public sealed class RpackPackageService
             AllowDirty = options.AllowDirty,
             StrictBase = options.StrictBase,
             PathPrefix = options.PathPrefix,
+            AddedFileConflictResolution = options.AddedFileConflictResolution,
             IgnoreSpaceChange = options.IgnoreSpaceChange
         });
 
@@ -357,6 +369,7 @@ public sealed class RpackPackageService
             AllowDirty = options.AllowDirty,
             StrictBase = options.StrictBase,
             PathPrefix = options.PathPrefix,
+            AddedFileConflictResolution = options.AddedFileConflictResolution,
             AllowedDirtyPaths = options.AllowedDirtyPaths,
             IgnoreSpaceChange = options.IgnoreSpaceChange
         });
@@ -370,7 +383,12 @@ public sealed class RpackPackageService
         var manifest = ReadManifest(archive);
         var repository = _gitClient.InspectRepository(options.RepositoryPath);
         using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, NormalizePathPrefix(options.PathPrefix));
-        var existingAddedFiles = PrepareExistingAddedFiles(repository.RootPath, manifest, tempPatchSet);
+        if (!TryParseAddedFileConflictResolution(options.AddedFileConflictResolution, out var addedFileConflictResolution, out parseFailure))
+        {
+            return parseFailure;
+        }
+
+        var existingAddedFiles = PrepareExistingAddedFiles(repository.RootPath, manifest, tempPatchSet, addedFileConflictResolution);
         if (!existingAddedFiles.Success)
         {
             return existingAddedFiles;
@@ -408,6 +426,132 @@ public sealed class RpackPackageService
         });
 
         return RpackResult.Ok($"Package applied. Apply id: {applyId}");
+    }
+
+    public RpackResult Rebase(RebasePackageOptions options)
+    {
+        var pathPrefixResult = ValidatePathPrefix(options.PathPrefix);
+        if (!pathPrefixResult.Success)
+        {
+            return pathPrefixResult;
+        }
+
+        var pathPrefix = NormalizePathPrefix(options.PathPrefix);
+        using var archive = ZipFile.OpenRead(options.PackagePath);
+        var manifest = ReadManifest(archive);
+        var manifestResult = ValidateManifest(manifest);
+        if (!manifestResult.Success)
+        {
+            return manifestResult;
+        }
+
+        var checksumResult = VerifyChecksums(archive, manifest);
+        if (!checksumResult.Success)
+        {
+            return checksumResult;
+        }
+
+        if (!TryParseAddedFileConflictResolution(options.AddedFileConflictResolution, out var addedFileConflictResolution, out var parseFailure))
+        {
+            return parseFailure;
+        }
+
+        var repository = _gitClient.InspectRepository(options.RepositoryPath);
+        var targetHead = _gitClient.ResolveCommit(repository.RootPath, "HEAD");
+        var worktreePath = _gitClient.CreateDetachedWorktree(repository.RootPath);
+        try
+        {
+            using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, pathPrefix);
+            var existingAddedFiles = PrepareExistingAddedFiles(
+                worktreePath,
+                manifest,
+                tempPatchSet,
+                addedFileConflictResolution);
+            if (!existingAddedFiles.Success)
+            {
+                return existingAddedFiles;
+            }
+
+            var patchPaths = tempPatchSet.Patches.Select(patch => patch.TempPath).ToArray();
+            var check = _gitClient.CheckApply(worktreePath, patchPaths, options.IgnoreSpaceChange);
+            if (!check.Success)
+            {
+                return RpackResult.Fail(
+                    $"Rebase patch dry-run failed for {FindFirstIndividuallyFailingPatch(worktreePath, tempPatchSet, options.IgnoreSpaceChange)}:{Environment.NewLine}{check.Message}");
+            }
+
+            foreach (var patch in tempPatchSet.Patches)
+            {
+                var apply = _gitClient.Apply(worktreePath, patch.TempPath, options.IgnoreSpaceChange);
+                if (!apply.Success)
+                {
+                    return RpackResult.Fail($"Rebase patch apply failed for {patch.ManifestPath}:{Environment.NewLine}{apply.Message}");
+                }
+            }
+
+            var rebasedPatch = _gitClient.CreateWorkingTreeDiff(worktreePath);
+            if (string.IsNullOrWhiteSpace(rebasedPatch))
+            {
+                return RpackResult.Fail("Rebase produced no changes.");
+            }
+
+            var rebasedPatchBytes = Encoding.UTF8.GetBytes(rebasedPatch);
+            var rebasedPatchHash = Sha256.ForBytes(rebasedPatchBytes);
+            var outputPath = Path.GetFullPath(options.OutputPath);
+            var outputDirectory = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrEmpty(outputDirectory))
+            {
+                Directory.CreateDirectory(outputDirectory);
+            }
+
+            if (File.Exists(outputPath))
+            {
+                File.Delete(outputPath);
+            }
+
+            var source = manifest.Source;
+            var rebasedManifest = new RpackManifest
+            {
+                Id = string.IsNullOrWhiteSpace(manifest.Id)
+                    ? $"rpack-rebased-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}"
+                    : $"{manifest.Id}-rebased",
+                Title = manifest.Title,
+                Description = manifest.Description,
+                CreatedAtUtc = DateTimeOffset.UtcNow.ToString("O"),
+                BaseCommit = targetHead,
+                Source = new RpackSourceInfo
+                {
+                    Repository = source?.Repository ?? GetRepositoryName(repository.RootPath),
+                    ProjectPath = source?.ProjectPath ?? repository.RootPath,
+                    BaseCommit = targetHead,
+                    HeadCommit = targetHead
+                },
+                RequiresCleanTree = manifest.RequiresCleanTree,
+                Mode = manifest.Mode,
+                Patches =
+                [
+                    new RpackPatch
+                    {
+                        Path = PatchPath,
+                        Kind = "git-diff",
+                        Sha256 = rebasedPatchHash
+                    }
+                ],
+                Validation = manifest.Validation
+            };
+
+            using var rebasedArchive = ZipFile.Open(outputPath, ZipArchiveMode.Create);
+            WriteEntry(rebasedArchive, ManifestPath, JsonSerializer.Serialize(rebasedManifest, JsonOptions));
+            WriteEntry(rebasedArchive, PatchPath, rebasedPatchBytes);
+            WriteEntry(rebasedArchive, "checksums.sha256", $"{rebasedPatchHash}  {PatchPath}{Environment.NewLine}");
+            WriteEntry(rebasedArchive, "README.md", $"# {rebasedManifest.Title}{Environment.NewLine}{Environment.NewLine}{rebasedManifest.Description}{Environment.NewLine}");
+
+            return RpackResult.Ok($"Rebased package written to {outputPath}");
+        }
+        finally
+        {
+            _ = _gitClient.RemoveDetachedWorktree(repository.RootPath, worktreePath);
+        }
     }
 
     public RpackResult UndoLastApply(string repositoryPath, bool allowDirty = false)
@@ -579,10 +723,21 @@ public sealed class RpackPackageService
             : manifest.BaseCommit;
     }
 
-    private RpackResult CheckPatchesInOrder(ZipArchive archive, RpackManifest manifest, string repositoryPath, string pathPrefix, bool ignoreSpaceChange)
+    private RpackResult CheckPatchesInOrder(
+        ZipArchive archive,
+        RpackManifest manifest,
+        string repositoryPath,
+        string pathPrefix,
+        bool ignoreSpaceChange,
+        string? addedFileConflictResolution)
     {
         using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, pathPrefix);
-        var existingAddedFiles = PrepareExistingAddedFiles(repositoryPath, manifest, tempPatchSet);
+        if (!TryParseAddedFileConflictResolution(addedFileConflictResolution, out var resolution, out var parseFailure))
+        {
+            return parseFailure;
+        }
+
+        var existingAddedFiles = PrepareExistingAddedFiles(repositoryPath, manifest, tempPatchSet, resolution);
         if (!existingAddedFiles.Success)
         {
             return existingAddedFiles;
@@ -626,15 +781,30 @@ public sealed class RpackPackageService
             : RpackResult.Ok($"{message.Message}{Environment.NewLine}{existingAddedFiles.Message}");
     }
 
-    private RpackResult PrepareExistingAddedFiles(string repositoryPath, RpackManifest manifest, TempPatchSet tempPatchSet)
+    private RpackResult PrepareExistingAddedFiles(
+        string repositoryPath,
+        RpackManifest manifest,
+        TempPatchSet tempPatchSet,
+        AddedFileConflictResolution addedFileConflictResolution)
     {
+        var sameContents = new List<string>();
         var skipped = new List<string>();
+        var converted = new List<string>();
         var conflicts = new List<string>();
 
         foreach (var patch in tempPatchSet.Patches)
         {
             var patchText = File.ReadAllText(patch.TempPath, Encoding.UTF8);
-            var rewritten = RewriteAlreadyPresentAddedFiles(repositoryPath, manifest, patch.ManifestPath, patchText, skipped, conflicts);
+            var rewritten = RewriteAlreadyPresentAddedFiles(
+                repositoryPath,
+                manifest,
+                patch.ManifestPath,
+                patchText,
+                sameContents,
+                skipped,
+                converted,
+                conflicts,
+                addedFileConflictResolution);
             if (!string.Equals(rewritten, patchText, StringComparison.Ordinal))
             {
                 File.WriteAllText(patch.TempPath, rewritten, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -653,9 +823,28 @@ public sealed class RpackPackageService
                 """);
         }
 
-        return skipped.Count == 0
-            ? RpackResult.Ok("No existing added files.")
-            : RpackResult.Ok($"Already-present file(s) skipped because target content matches the package:{Environment.NewLine}- {string.Join(Environment.NewLine + "- ", skipped)}");
+        if (sameContents.Count == 0 && skipped.Count == 0 && converted.Count == 0)
+        {
+            return RpackResult.Ok("No existing added files.");
+        }
+
+        var summaries = new List<string>();
+        if (sameContents.Count > 0)
+        {
+            summaries.Add($"Already-present file(s) skipped because target content matches the package:{Environment.NewLine}- {string.Join(Environment.NewLine + "- ", sameContents)}");
+        }
+
+        if (skipped.Count > 0)
+        {
+            summaries.Add($"Already-present file(s) skipped due to conflict resolution:{Environment.NewLine}- {string.Join(Environment.NewLine + "- ", skipped)}");
+        }
+
+        if (converted.Count > 0)
+        {
+            summaries.Add($"Already-present file(s) rewritten from add to modify:{Environment.NewLine}- {string.Join(Environment.NewLine + "- ", converted)}");
+        }
+
+        return RpackResult.Ok(string.Join(Environment.NewLine + Environment.NewLine, summaries));
     }
 
     private static string RewriteAlreadyPresentAddedFiles(
@@ -663,8 +852,11 @@ public sealed class RpackPackageService
         RpackManifest manifest,
         string manifestPatchPath,
         string patchText,
+        List<string> sameContents,
         List<string> skipped,
-        List<string> conflicts)
+        List<string> converted,
+        List<string> conflicts,
+        AddedFileConflictResolution addedFileConflictResolution)
     {
         var lines = patchText.Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
         var output = new List<string>();
@@ -717,12 +909,37 @@ public sealed class RpackPackageService
                     var targetText = File.ReadAllText(targetPath);
                     if (NormalizeLineEndings(targetText) == NormalizeLineEndings(addedFile.Content))
                     {
-                        skipped.Add($"{manifestPatchPath}:{addedFile.Path}");
+                        sameContents.Add($"{manifestPatchPath}:{addedFile.Path}");
                         block.Clear();
                         return;
                     }
 
-                    conflicts.Add(BuildAddedFileConflict(manifest, manifestPatchPath, addedFile, targetPath));
+                    if (addedFileConflictResolution == AddedFileConflictResolution.Skip)
+                    {
+                        skipped.Add($"{manifestPatchPath}:{addedFile.Path} (content differs)");
+                        block.Clear();
+                        return;
+                    }
+
+                    if (addedFileConflictResolution == AddedFileConflictResolution.Abort)
+                    {
+                        conflicts.Add(BuildAddedFileConflict(manifest, manifestPatchPath, addedFile, targetPath));
+                        block.Clear();
+                        return;
+                    }
+
+                    var convertedBlock = BuildModifyPatchForAddedFileBlock(addedFile, targetText);
+                    if (convertedBlock is null)
+                    {
+                        conflicts.Add(BuildAddedFileConflict(manifest, manifestPatchPath, addedFile, targetPath));
+                        block.Clear();
+                        return;
+                    }
+
+                    converted.Add($"{manifestPatchPath}:{addedFile.Path}");
+                    output.AddRange(convertedBlock.Split('\n'));
+                    block.Clear();
+                    return;
                 }
             }
 
@@ -825,6 +1042,86 @@ public sealed class RpackPackageService
     {
         return value.Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace("\r", "\n", StringComparison.Ordinal);
+    }
+
+    private static bool TryParseAddedFileConflictResolution(
+        string? value,
+        out AddedFileConflictResolution resolution,
+        out RpackResult failure)
+    {
+        var normalized = string.IsNullOrWhiteSpace(value)
+            ? "abort"
+            : value.Trim().ToLowerInvariant();
+
+        resolution = normalized switch
+        {
+            "abort" => AddedFileConflictResolution.Abort,
+            "skip" => AddedFileConflictResolution.Skip,
+            "modify" => AddedFileConflictResolution.Modify,
+            "as-modify" => AddedFileConflictResolution.Modify,
+            "overwrite" => AddedFileConflictResolution.Overwrite,
+            _ => AddedFileConflictResolution.Abort
+        };
+
+        if (normalized is "abort" or "skip" or "modify" or "as-modify" or "overwrite")
+        {
+            failure = RpackResult.Ok("ok");
+            return true;
+        }
+
+        failure = RpackResult.Fail($"Unknown added-file conflict resolution '{value}'. Expected: abort, skip, modify, overwrite, as-modify.");
+        return false;
+    }
+
+    private static string? BuildModifyPatchForAddedFileBlock(AddedTextFile addedFile, string targetText)
+    {
+        var oldLines = SplitLinesForPatch(targetText, out var oldHasTrailingNewline);
+        var newLines = SplitLinesForPatch(addedFile.Content, out var newHasTrailingNewline);
+
+        var builder = new List<string>
+        {
+            $"diff --git a/{addedFile.Path} b/{addedFile.Path}",
+            "index 0000000..0000000",
+            $"--- a/{addedFile.Path}",
+            $"+++ b/{addedFile.Path}",
+            $"@@ -1,{oldLines.Length} +1,{newLines.Length} @@"
+        };
+
+        foreach (var line in oldLines)
+        {
+            builder.Add($"-{line}");
+        }
+
+        if (!oldHasTrailingNewline)
+        {
+            builder.Add(@"\ No newline at end of file");
+        }
+
+        foreach (var line in newLines)
+        {
+            builder.Add($"+{line}");
+        }
+
+        if (!newHasTrailingNewline)
+        {
+            builder.Add(@"\ No newline at end of file");
+        }
+
+        return string.Join('\n', builder);
+    }
+
+    private static string[] SplitLinesForPatch(string content, out bool hasTrailingNewline)
+    {
+        var normalized = NormalizeLineEndings(content);
+        hasTrailingNewline = normalized.EndsWith('\n', StringComparison.Ordinal);
+        if (hasTrailingNewline)
+        {
+            normalized = normalized[..^1];
+        }
+
+        return string.IsNullOrEmpty(normalized)
+            ? []
+            : normalized.Split('\n');
     }
 
     private static string ClassifyCheckFailure(string message)
@@ -1541,6 +1838,14 @@ public sealed class RpackPackageService
         public string Category { get; set; } = "Other";
     }
 
+    private enum AddedFileConflictResolution
+    {
+        Abort,
+        Skip,
+        Modify,
+        Overwrite
+    }
+
     private sealed record AddedTextFile(string Path, string Content);
 
     private sealed record LintIssue(string Severity, string Code, string Message);
@@ -1605,6 +1910,7 @@ public sealed class CheckPackageOptions
     public bool AllowDirty { get; init; }
     public bool StrictBase { get; init; }
     public string? PathPrefix { get; init; }
+    public string? AddedFileConflictResolution { get; init; }
     public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
     public bool IgnoreSpaceChange { get; init; } = true;
 }
@@ -1616,7 +1922,18 @@ public sealed class ApplyPackageOptions
     public bool AllowDirty { get; init; }
     public bool StrictBase { get; init; }
     public string? PathPrefix { get; init; }
+    public string? AddedFileConflictResolution { get; init; }
     public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
+    public bool IgnoreSpaceChange { get; init; } = true;
+}
+
+public sealed class RebasePackageOptions
+{
+    public required string PackagePath { get; init; }
+    public required string RepositoryPath { get; init; }
+    public required string OutputPath { get; init; }
+    public string? PathPrefix { get; init; }
+    public string? AddedFileConflictResolution { get; init; } = "modify";
     public bool IgnoreSpaceChange { get; init; } = true;
 }
 
@@ -1627,6 +1944,7 @@ public sealed class DiagnosePackageOptions
     public bool AllowDirty { get; init; }
     public bool StrictBase { get; init; }
     public string? PathPrefix { get; init; }
+    public string? AddedFileConflictResolution { get; init; }
     public bool IgnoreSpaceChange { get; init; } = true;
 }
 
