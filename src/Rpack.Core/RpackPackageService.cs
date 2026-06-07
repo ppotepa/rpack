@@ -117,6 +117,7 @@ public sealed class RpackPackageService
             Source = new RpackSourceInfo
             {
                 Repository = GetRepositoryName(repository.RootPath),
+                ProjectPath = repository.RootPath,
                 BaseCommit = baseCommit,
                 HeadCommit = headCommit
             },

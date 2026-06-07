@@ -20,6 +20,7 @@ public sealed class RpackManifest
 public sealed class RpackSourceInfo
 {
     public string Repository { get; init; } = "";
+    public string ProjectPath { get; init; } = "";
     public string BaseCommit { get; init; } = "";
     public string HeadCommit { get; init; } = "";
 }

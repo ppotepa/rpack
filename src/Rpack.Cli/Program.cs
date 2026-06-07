@@ -81,6 +81,7 @@ static int RunInspect(string[] args, RpackPackageService service)
     Console.WriteLine($"mode: {inspection.Manifest.Mode}");
     Console.WriteLine($"createdAtUtc: {inspection.Manifest.CreatedAtUtc}");
     Console.WriteLine($"sourceRepository: {inspection.Manifest.Source?.Repository}");
+    Console.WriteLine($"sourceProjectPath: {inspection.Manifest.Source?.ProjectPath}");
     Console.WriteLine($"baseCommit: {inspection.Manifest.Source?.BaseCommit ?? inspection.Manifest.BaseCommit}");
     Console.WriteLine($"headCommit: {inspection.Manifest.Source?.HeadCommit}");
     Console.WriteLine($"changedFiles: {inspection.ChangedFiles.Count}");
@@ -294,6 +295,12 @@ static string ResolveOpenRepositoryArgument(CliOptions options, GitClient gitCli
         return explicitRepository;
     }
 
+    var packageRepositoryHint = TryGetProjectPathFromPackage(packagePath, gitClient);
+    if (!string.IsNullOrWhiteSpace(packageRepositoryHint))
+    {
+        return packageRepositoryHint;
+    }
+
     var packageRepository = gitClient.FindRepositoryFrom(packagePath);
     if (packageRepository is not null)
     {
@@ -307,6 +314,25 @@ static string ResolveOpenRepositoryArgument(CliOptions options, GitClient gitCli
     }
 
     throw new InvalidOperationException("Could not find a Git repository from the package location or current directory. Use --repo <repo>.");
+}
+
+static string? TryGetProjectPathFromPackage(string packagePath, GitClient gitClient)
+{
+    try
+    {
+        var inspection = new RpackPackageService(gitClient).Inspect(packagePath);
+        var projectPath = inspection.Manifest.Source?.ProjectPath;
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            return null;
+        }
+
+        return gitClient.InspectRepository(projectPath).RootPath;
+    }
+    catch
+    {
+        return null;
+    }
 }
 
 static IReadOnlyList<string> GetPackageDirtyException(string repositoryPath, string packagePath)

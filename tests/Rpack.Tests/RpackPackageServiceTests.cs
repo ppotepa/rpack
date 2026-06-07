@@ -52,6 +52,7 @@ public class RpackPackageServiceTests
         Assert.True(create.Success, create.Message);
         Assert.Single(inspection.ChangedFiles);
         Assert.Equal("hello.txt", inspection.ChangedFiles[0].Path);
+        Assert.Equal(Path.GetFullPath(source), inspection.Manifest.Source?.ProjectPath);
         Assert.Equal(1, inspection.AddedLines);
         Assert.Equal(1, inspection.RemovedLines);
         Assert.True(check.Success, check.Message);

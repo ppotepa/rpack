@@ -40,6 +40,11 @@ rpack check change.rpack --path-prefix src
 rpack apply change.rpack --path-prefix src
 ```
 
+Current rpack packages may include `Source.ProjectPath`. This is a local hint
+for `rpack open` / Windows double-click so the package can be opened outside the
+repository. It is not required for portability, and agents should not invent a
+path unless they know the user's actual target checkout path.
+
 ## Basic Workflow
 
 From the repository root:
@@ -221,6 +226,7 @@ Agents should prefer the fuller form:
   "BaseCommit": "<base-commit-sha-or-empty>",
   "Source": {
     "Repository": "<repository-name-or-empty>",
+    "ProjectPath": "<local-git-root-path-or-empty>",
     "BaseCommit": "<base-commit-sha-or-empty>",
     "HeadCommit": "<head-commit-sha-or-empty>"
   },
@@ -268,7 +274,9 @@ git diff --binary --output="$patchPath"
 $patchBytes = [IO.File]::ReadAllBytes($patchPath)
 $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($patchBytes)).ToLowerInvariant()
 $base = (git rev-parse HEAD).Trim()
-$repo = Split-Path -Leaf (git rev-parse --show-toplevel)
+$root = (git rev-parse --show-toplevel).Trim()
+$jsonRoot = $root.Replace('\', '\\')
+$repo = Split-Path -Leaf $root
 $created = [DateTimeOffset]::UtcNow.ToString("O")
 
 $manifest = @"
@@ -281,6 +289,7 @@ $manifest = @"
   "BaseCommit": "$base",
   "Source": {
     "Repository": "$repo",
+    "ProjectPath": "$jsonRoot",
     "BaseCommit": "$base",
     "HeadCommit": "$base"
   },
@@ -329,7 +338,9 @@ mkdir -p "$work/patches"
 git diff --binary > "$work/patches/change.patch"
 sha="$(sha256sum "$work/patches/change.patch" | awk '{print $1}')"
 base="$(git rev-parse HEAD)"
-repo="$(basename "$(git rev-parse --show-toplevel)")"
+root="$(git rev-parse --show-toplevel)"
+root_json="${root//\\/\\\\}"
+repo="$(basename "$root")"
 created="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 cat > "$work/manifest.json" <<EOF
@@ -342,6 +353,7 @@ cat > "$work/manifest.json" <<EOF
   "BaseCommit": "${base}",
   "Source": {
     "Repository": "${repo}",
+    "ProjectPath": "${root_json}",
     "BaseCommit": "${base}",
     "HeadCommit": "${base}"
   },

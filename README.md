@@ -90,7 +90,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.11
+.\scripts\build-windows-msi.ps1 -Version 0.1.12
 ```
 
 ## Usage
@@ -156,8 +156,12 @@ rpack open change.rpack
 ```
 
 `open` first looks for a Git repository by walking upward from the `.rpack`
-file location. If the package is outside a repository, it falls back to the
-current directory or an explicit repo argument:
+file location. Packages created by current rpack versions also include
+`Source.ProjectPath` as a local repository hint. When present and valid,
+`rpack open` and `rpack-open.exe` can use that path, so a package can be opened
+from Downloads or Desktop without copying it into the target repository.
+
+An explicit repo argument still wins over the manifest hint:
 
 ```bash
 rpack open change.rpack ./repo
@@ -229,6 +233,7 @@ to the same list instead of opening more windows.
 For each package, rpack:
 
 - finds the target Git repository from the package location
+- uses `Source.ProjectPath` from the manifest when the package is outside a repository and the path exists locally
 - inspects the package
 - verifies checksums
 - runs `git apply --check`
@@ -345,6 +350,7 @@ Example manifest:
   "BaseCommit": "abc123",
   "Source": {
     "Repository": "example",
+    "ProjectPath": "D:\\Git\\example",
     "BaseCommit": "abc123",
     "HeadCommit": "abc123"
   },

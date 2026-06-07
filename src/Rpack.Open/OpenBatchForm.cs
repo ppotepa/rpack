@@ -421,7 +421,32 @@ internal sealed class OpenBatchForm : Form
             return _gitClient.InspectRepository(job.RepositoryOption).RootPath;
         }
 
+        var packageRepositoryHint = TryResolveProjectPathFromPackage(job.PackagePath);
+        if (!string.IsNullOrWhiteSpace(packageRepositoryHint))
+        {
+            return packageRepositoryHint;
+        }
+
         return _gitClient.FindRepositoryFrom(job.PackagePath)?.RootPath;
+    }
+
+    private string? TryResolveProjectPathFromPackage(string packagePath)
+    {
+        try
+        {
+            var inspection = _service.Inspect(packagePath);
+            var projectPath = inspection.Manifest.Source?.ProjectPath;
+            if (string.IsNullOrWhiteSpace(projectPath))
+            {
+                return null;
+            }
+
+            return _gitClient.InspectRepository(projectPath).RootPath;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static IReadOnlyList<string> GetPackageDirtyException(string repositoryPath, string packagePath)

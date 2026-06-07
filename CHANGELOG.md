@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-06-07
+
+### Added
+
+- Added optional `Source.ProjectPath` manifest metadata for packages created by rpack.
+- `rpack open` and `rpack-open.exe` now use `Source.ProjectPath` as a local repository hint when no explicit repository is provided.
+
+### Changed
+
+- `rpack inspect` now prints the source project path when present.
+
 ## [0.1.11] - 2026-06-07
 
 ### Added
