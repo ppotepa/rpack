@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Text;
 using System.Windows.Forms;
 using Rpack.Core;
 
@@ -6,11 +7,16 @@ namespace Rpack.Open;
 
 internal sealed class OpenBatchForm : Form
 {
-    private readonly GitClient _gitClient = new(new ProcessRunner());
+    private readonly ProcessRunner _processRunner;
+    private readonly GitClient _gitClient;
     private readonly RpackPackageService _service;
     private readonly List<PackageJob> _jobs = [];
     private readonly ListView _list = new();
+    private readonly TabControl _statusTabs = new();
+    private readonly TabPage _detailsTab = new("Status / errors");
+    private readonly TabPage _consoleLogTab = new("Console log");
     private readonly TextBox _details = new();
+    private readonly TextBox _consoleLog = new();
     private readonly Label _summary = new();
     private readonly Button _recheckButton = new();
     private readonly Button _applyButton = new();
@@ -23,6 +29,8 @@ internal sealed class OpenBatchForm : Form
 
     public OpenBatchForm()
     {
+        _processRunner = new ProcessRunner(AppendProcessLog);
+        _gitClient = new GitClient(_processRunner);
         _service = new RpackPackageService(_gitClient);
         Text = "rpack packages";
         StartPosition = FormStartPosition.CenterScreen;
@@ -158,6 +166,19 @@ internal sealed class OpenBatchForm : Form
         _details.WordWrap = false;
         _details.Font = new Font(FontFamily.GenericMonospace, 9);
 
+        _consoleLog.Dock = DockStyle.Fill;
+        _consoleLog.Multiline = true;
+        _consoleLog.ReadOnly = true;
+        _consoleLog.ScrollBars = ScrollBars.Both;
+        _consoleLog.WordWrap = false;
+        _consoleLog.Font = new Font(FontFamily.GenericMonospace, 9);
+
+        _statusTabs.Dock = DockStyle.Fill;
+        _detailsTab.Controls.Add(_details);
+        _consoleLogTab.Controls.Add(_consoleLog);
+        _statusTabs.TabPages.Add(_detailsTab);
+        _statusTabs.TabPages.Add(_consoleLogTab);
+
         _ignoreSpaceChangeBox.Text = "Allow whitespace context match";
         _ignoreSpaceChangeBox.AutoSize = true;
         _ignoreSpaceChangeBox.Height = 30;
@@ -219,9 +240,10 @@ internal sealed class OpenBatchForm : Form
         _copyButton.Height = 30;
         _copyButton.Click += (_, _) =>
         {
-            if (!string.IsNullOrWhiteSpace(_details.Text))
+            var text = _statusTabs.SelectedTab == _consoleLogTab ? _consoleLog.Text : _details.Text;
+            if (!string.IsNullOrWhiteSpace(text))
             {
-                Clipboard.SetText(_details.Text);
+                Clipboard.SetText(text);
             }
         };
 
@@ -234,7 +256,7 @@ internal sealed class OpenBatchForm : Form
 
         root.Controls.Add(_summary, 0, 0);
         root.Controls.Add(_list, 0, 1);
-        root.Controls.Add(_details, 0, 2);
+        root.Controls.Add(_statusTabs, 0, 2);
         root.Controls.Add(buttons, 0, 3);
         Controls.Add(root);
     }
@@ -563,6 +585,75 @@ internal sealed class OpenBatchForm : Form
         _details.Text = _list.SelectedItems[0].Tag is PackageJob job
             ? job.Details
             : "";
+    }
+
+    private void AppendProcessLog(ProcessLogEntry entry)
+    {
+        if (IsDisposed || Disposing)
+        {
+            return;
+        }
+
+        if (InvokeRequired || !IsHandleCreated)
+        {
+            try
+            {
+                BeginInvoke(() => AppendProcessLog(entry));
+            }
+            catch (InvalidOperationException)
+            {
+                return;
+            }
+
+            return;
+        }
+
+        if (_consoleLog.TextLength > 0)
+        {
+            _consoleLog.AppendText(Environment.NewLine);
+        }
+
+        _consoleLog.AppendText(FormatProcessLog(entry));
+        _consoleLog.AppendText(Environment.NewLine);
+    }
+
+    private static string FormatProcessLog(ProcessLogEntry entry)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"[{entry.Timestamp:HH:mm:ss}] {FormatCommand(entry.FileName, entry.Arguments)}");
+        builder.AppendLine($"cwd: {entry.WorkingDirectory}");
+        builder.AppendLine($"exit: {entry.ExitCode}");
+
+        if (!string.IsNullOrWhiteSpace(entry.StandardOutput))
+        {
+            builder.AppendLine("stdout:");
+            builder.AppendLine(entry.StandardOutput.TrimEnd());
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.StandardError))
+        {
+            builder.AppendLine("stderr:");
+            builder.AppendLine(entry.StandardError.TrimEnd());
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatCommand(string fileName, IReadOnlyList<string> arguments)
+    {
+        return string.Join(" ", new[] { fileName }.Concat(arguments).Select(QuoteArgument));
+    }
+
+    private static string QuoteArgument(string argument)
+    {
+        if (string.IsNullOrEmpty(argument))
+        {
+            return "\"\"";
+        }
+
+        return argument.Any(char.IsWhiteSpace) || argument.Contains('"')
+            ? $"\"{argument.Replace("\"", "\\\"")}\""
+            : argument;
     }
 
     private static string BuildSuccessDetails(PackageJob job, string stage, string message)

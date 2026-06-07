@@ -6,6 +6,21 @@ namespace Rpack.Tests;
 public class RpackPackageServiceTests
 {
     [Fact]
+    public void ProcessRunner_LogsCompletedProcessOutput()
+    {
+        var logs = new List<ProcessLogEntry>();
+
+        var result = new ProcessRunner(logs.Add).Run("git", ["--version"], Directory.GetCurrentDirectory());
+
+        Assert.True(result.Success, result.CombinedOutput);
+        var log = Assert.Single(logs);
+        Assert.Equal("git", log.FileName);
+        Assert.Equal(["--version"], log.Arguments);
+        Assert.Equal(0, log.ExitCode);
+        Assert.Contains("git version", log.StandardOutput, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void WorkingTreePatch_CanApplyToDifferentRepositoryHistory_ThenUndo()
     {
         using var workspace = new TempWorkspace();

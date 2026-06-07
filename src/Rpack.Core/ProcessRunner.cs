@@ -5,19 +5,28 @@ namespace Rpack.Core;
 
 public sealed class ProcessRunner
 {
+    private readonly Action<ProcessLogEntry>? _log;
+
+    public ProcessRunner(Action<ProcessLogEntry>? log = null)
+    {
+        _log = log;
+    }
+
     public ProcessResult Run(string fileName, IEnumerable<string> arguments, string workingDirectory)
     {
+        var argumentList = arguments.ToArray();
         var startInfo = new ProcessStartInfo(fileName)
         {
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
 
-        foreach (var argument in arguments)
+        foreach (var argument in argumentList)
         {
             startInfo.ArgumentList.Add(argument);
         }
@@ -25,16 +34,43 @@ public sealed class ProcessRunner
         using var process = Process.Start(startInfo);
         if (process is null)
         {
-            return new ProcessResult(-1, "", $"Failed to start process: {fileName}");
+            var failedStart = new ProcessResult(-1, "", $"Failed to start process: {fileName}");
+            Log(new ProcessLogEntry(DateTimeOffset.Now, fileName, argumentList, workingDirectory, failedStart.ExitCode, failedStart.StandardOutput, failedStart.StandardError));
+            return failedStart;
         }
 
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
         process.WaitForExit();
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
 
-        return new ProcessResult(process.ExitCode, stdout, stderr);
+        var result = new ProcessResult(process.ExitCode, stdout, stderr);
+        Log(new ProcessLogEntry(DateTimeOffset.Now, fileName, argumentList, workingDirectory, result.ExitCode, result.StandardOutput, result.StandardError));
+        return result;
+    }
+
+    private void Log(ProcessLogEntry entry)
+    {
+        try
+        {
+            _log?.Invoke(entry);
+        }
+        catch
+        {
+            // Logging must never change command execution behavior.
+        }
     }
 }
+
+public sealed record ProcessLogEntry(
+    DateTimeOffset Timestamp,
+    string FileName,
+    IReadOnlyList<string> Arguments,
+    string WorkingDirectory,
+    int ExitCode,
+    string StandardOutput,
+    string StandardError);
 
 public sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError)
 {

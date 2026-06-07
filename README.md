@@ -90,7 +90,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.14
+.\scripts\build-windows-msi.ps1 -Version 0.1.15
 ```
 
 This creates two installers:
@@ -101,8 +101,8 @@ This creates two installers:
 Build only one variant when needed:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.14 -Variant framework-dependent
-.\scripts\build-windows-msi.ps1 -Version 0.1.14 -Variant self-contained
+.\scripts\build-windows-msi.ps1 -Version 0.1.15 -Variant framework-dependent
+.\scripts\build-windows-msi.ps1 -Version 0.1.15 -Variant self-contained
 ```
 
 ## Usage
@@ -253,6 +253,7 @@ For each package, rpack:
 - verifies checksums
 - runs `git apply --check`
 - shows status, warnings, and detailed errors in the batch window
+- captures hidden `git` command output in the `Console log` tab
 - applies checked ready packages only after explicit confirmation
 
 Normal double-click keeps the default safety model and requires a clean working
@@ -275,7 +276,10 @@ The `Allow whitespace context match` checkbox is enabled by default. Uncheck it
 to force strict patch context matching for pending packages.
 
 The batch window stops applying at the first failed package and keeps the raw Git
-or package error available in the details panel for diagnosis.
+or package error available in the `Status / errors` tab for diagnosis. Git
+processes launched by `rpack-open.exe` run without visible console windows; their
+stdout, stderr, working directory, and exit codes are shown in the `Console log`
+tab.
 
 ## LLM Agents
 

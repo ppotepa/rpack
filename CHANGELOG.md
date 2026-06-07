@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-06-07
+
+### Added
+
+- Added a `Console log` tab to `rpack-open.exe` showing hidden process commands, working directories, exit codes, stdout, and stderr.
+
+### Changed
+
+- `ProcessRunner` now starts child processes with no visible console window.
+- `rpack-open.exe` now keeps package errors in a `Status / errors` tab and captures Git command output during check/apply.
+
 ## [0.1.14] - 2026-06-07
 
 ### Changed
