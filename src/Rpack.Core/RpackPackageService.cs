@@ -383,7 +383,10 @@ public sealed class RpackPackageService
         var manifest = ReadManifest(archive);
         var repository = _gitClient.InspectRepository(options.RepositoryPath);
         using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, NormalizePathPrefix(options.PathPrefix));
-        if (!TryParseAddedFileConflictResolution(options.AddedFileConflictResolution, out var addedFileConflictResolution, out parseFailure))
+        if (!TryParseAddedFileConflictResolution(
+                options.AddedFileConflictResolution,
+                out var addedFileConflictResolution,
+                out var parseFailure))
         {
             return parseFailure;
         }
@@ -1107,13 +1110,13 @@ public sealed class RpackPackageService
             builder.Add(@"\ No newline at end of file");
         }
 
-        return string.Join('\n', builder);
+        return string.Join("\n", builder);
     }
 
     private static string[] SplitLinesForPatch(string content, out bool hasTrailingNewline)
     {
         var normalized = NormalizeLineEndings(content);
-        hasTrailingNewline = normalized.EndsWith('\n', StringComparison.Ordinal);
+        hasTrailingNewline = normalized.EndsWith("\n", StringComparison.Ordinal);
         if (hasTrailingNewline)
         {
             normalized = normalized[..^1];
