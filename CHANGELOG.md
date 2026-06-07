@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-06-07
+
+### Changed
+
+- Hardened `rpack-open.exe` startup handoff so multi-select and Shift-open package launches are collected into one batch window more reliably.
+- Delayed launcher IPC startup until the WinForms window is ready and extended secondary process retry time during startup.
+
 ## [0.1.12] - 2026-06-07
 
 ### Added

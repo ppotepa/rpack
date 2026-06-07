@@ -33,10 +33,19 @@ internal static class Program
                 return singleInstance.SendToPrimary(request) ? 0 : 1;
             }
 
+            IDisposable? server = null;
             using var form = new OpenBatchForm();
-            using var server = singleInstance.StartServer(form.AddRequest);
+            form.Shown += (_, _) => server ??= singleInstance.StartServer(form.AddRequest);
             form.AddRequest(request);
-            Application.Run(form);
+            try
+            {
+                Application.Run(form);
+            }
+            finally
+            {
+                server?.Dispose();
+            }
+
             return 0;
         }
         catch (Exception ex)

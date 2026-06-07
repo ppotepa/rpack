@@ -41,9 +41,22 @@ internal sealed class OpenBatchForm : Form
 
     public void AddRequest(OpenRequest request)
     {
+        if (IsDisposed || Disposing)
+        {
+            return;
+        }
+
         if (InvokeRequired)
         {
-            BeginInvoke(() => AddRequest(request));
+            try
+            {
+                BeginInvoke(() => AddRequest(request));
+            }
+            catch (InvalidOperationException)
+            {
+                return;
+            }
+
             return;
         }
 
@@ -87,6 +100,11 @@ internal sealed class OpenBatchForm : Form
         _ignoreSpaceChangeBox.Checked = _jobs.Count == 0 || _jobs.All(job => job.IgnoreSpaceChange);
         _updatingWhitespaceBox = false;
         RefreshList();
+        if (WindowState == FormWindowState.Minimized)
+        {
+            WindowState = FormWindowState.Normal;
+        }
+
         BringToFront();
         Activate();
         _checkTimer.Stop();

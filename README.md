@@ -90,7 +90,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.12
+.\scripts\build-windows-msi.ps1 -Version 0.1.13
 ```
 
 ## Usage
@@ -229,6 +229,9 @@ published with the same embedded icon on Windows builds.
 When one or more packages are double-clicked, rpack opens a single batch window.
 Additional `.rpack` files opened while that window is already running are added
 to the same list instead of opening more windows.
+During multi-select opens, helper processes wait for the first window to finish
+starting and hand their package paths to that same window. This also applies to
+Shift dirty-tree mode.
 
 For each package, rpack:
 
