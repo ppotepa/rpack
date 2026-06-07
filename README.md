@@ -90,7 +90,19 @@ dotnet pack src/Rpack.Cli -c Release
 Build a Windows MSI locally:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.13
+.\scripts\build-windows-msi.ps1 -Version 0.1.14
+```
+
+This creates two installers:
+
+- `rpack-<version>-win-x64-self-contained.msi` includes the .NET runtime and is best for clean Windows machines.
+- `rpack-<version>-win-x64-framework-dependent.msi` is much smaller and requires the .NET 10 Desktop Runtime x64 to be installed.
+
+Build only one variant when needed:
+
+```powershell
+.\scripts\build-windows-msi.ps1 -Version 0.1.14 -Variant framework-dependent
+.\scripts\build-windows-msi.ps1 -Version 0.1.14 -Variant self-contained
 ```
 
 ## Usage

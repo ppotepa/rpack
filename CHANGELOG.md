@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-06-07
+
+### Changed
+
+- Windows MSI builds now create both self-contained and framework-dependent installers.
+- Framework-dependent MSI builds install all required publish output files and require the .NET 10 Desktop Runtime x64.
+
 ## [0.1.13] - 2026-06-07
 
 ### Changed
