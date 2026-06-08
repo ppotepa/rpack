@@ -433,6 +433,20 @@ Example manifest:
 }
 ```
 
+`Validation` must be an array of objects, not an array of strings. Use an empty
+array when no package-level validation commands are declared. When validation is
+included, each item uses the `Name`, `Command`, and `Optional` fields:
+
+```json
+"Validation": [
+  {
+    "Name": "Build",
+    "Command": "dotnet build",
+    "Optional": false
+  }
+]
+```
+
 ## Local State
 
 Because `rpack` is intended to be installed and run from `PATH`, state is stored per target repository under Git's metadata path for `rpack`:

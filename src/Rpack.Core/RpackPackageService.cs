@@ -637,8 +637,15 @@ public sealed class RpackPackageService
     {
         var entry = archive.GetEntry(ManifestPath) ?? throw new InvalidOperationException("manifest.json is missing.");
         using var stream = entry.Open();
-        var manifest = JsonSerializer.Deserialize(stream, RpackJsonContext.Default.RpackManifest);
-        return manifest ?? throw new InvalidOperationException("manifest.json is invalid.");
+        try
+        {
+            var manifest = JsonSerializer.Deserialize(stream, RpackJsonContext.Default.RpackManifest);
+            return manifest ?? throw new InvalidOperationException("manifest.json is invalid.");
+        }
+        catch (JsonException ex) when (ex.Path?.StartsWith("$.Validation", StringComparison.Ordinal) == true)
+        {
+            throw new InvalidOperationException("manifest.json is invalid: Validation must be an array of objects with Name, Command, and Optional fields. Use Validation: [] when the package does not declare validation commands.", ex);
+        }
     }
 
     private static RpackResult ValidateManifest(RpackManifest manifest)
