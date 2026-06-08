@@ -12,7 +12,10 @@
 rpack create -o change.rpack
 rpack inspect change.rpack
 rpack check change.rpack
+rpack lint change.rpack
+rpack diagnose change.rpack
 rpack rebase change.rpack
+rpack open change.rpack
 rpack apply change.rpack
 rpack undo
 ```
@@ -39,7 +42,7 @@ Implemented:
 - `.rpack` as ZIP
 - `manifest.json`
 - one or more ordered `git diff --binary` patches
-- `create`, `inspect`, `check`, `rebase`, `apply`, `undo`, `history`
+- `create`, `inspect`, `check`, `diagnose`, `lint`, `rebase`, `apply`, `undo`, `history`
 - `open` for guided package application
 - checksum verification
 - clean working tree requirement by default
@@ -116,6 +119,12 @@ rpack create -o change.rpack
 
 `rpack create` currently emits one aggregate patch entry. Packages created manually or by agents may include multiple ordered patch entries in `Patches`.
 
+Set package metadata when useful:
+
+```bash
+rpack create -o change.rpack --id change-123 --title "Fix parser" --description "Parser and tests"
+```
+
 Create a package from staged changes:
 
 ```bash
@@ -128,11 +137,103 @@ Create a package from a revision range, still as a working tree patch:
 rpack create --from HEAD~2 --to HEAD -o change.rpack
 ```
 
+### Manual multi-patch packages
+
+`rpack create` writes one aggregate patch. To build a multi-patch package,
+create the ZIP manually and declare every patch in `manifest.json`.
+
+Each patch must be a Git diff that `git apply` can read, and patches must be
+listed in the exact order they should be applied. Do not rely on filename
+sorting; the `Patches` array is the source of truth.
+
+For a patch series based on commits, create one diff per step:
+
+```bash
+mkdir -p package/patches
+git diff --binary HEAD~2 HEAD~1 > package/patches/0001-core.patch
+git diff --binary HEAD~1 HEAD > package/patches/0002-tests.patch
+```
+
+For independent working-tree areas, split by path:
+
+```bash
+mkdir -p package/patches
+git diff --binary -- src/Rpack.Core > package/patches/0001-core.patch
+git diff --binary -- tests > package/patches/0002-tests.patch
+```
+
+Compute SHA-256 for each patch and put the lowercase value into the matching
+manifest entry. The current reader expects JSON property names in the casing
+shown here, such as `Format`, `Mode`, `Patches`, `Path`, `Kind`, and `Sha256`.
+
+```bash
+sha256sum package/patches/*.patch
+```
+
+On PowerShell:
+
+```powershell
+Get-FileHash package\patches\*.patch -Algorithm SHA256
+```
+
+```json
+"Patches": [
+  {
+    "Path": "patches/0001-core.patch",
+    "Kind": "git-diff",
+    "Sha256": "<lowercase-sha256-of-0001-core.patch>"
+  },
+  {
+    "Path": "patches/0002-tests.patch",
+    "Kind": "git-diff",
+    "Sha256": "<lowercase-sha256-of-0002-tests.patch>"
+  }
+]
+```
+
+Recommended archive layout:
+
+```txt
+change.rpack
+|-- manifest.json
+|-- patches/
+|   |-- 0001-core.patch
+|   `-- 0002-tests.patch
+|-- checksums.sha256
+`-- README.md
+```
+
+`checksums.sha256` is optional for the current reader, but useful for humans:
+
+```txt
+<lowercase-sha256-of-0001-core.patch>  patches/0001-core.patch
+<lowercase-sha256-of-0002-tests.patch>  patches/0002-tests.patch
+```
+
+Place `manifest.json` at the archive root and ZIP the package contents, not the
+parent directory:
+
+```bash
+(cd package && zip -r ../change.rpack manifest.json patches checksums.sha256 README.md)
+```
+
+Before sharing a manual multi-patch package, verify it:
+
+```bash
+rpack inspect change.rpack
+rpack check change.rpack
+```
+
 Rebase a package against another repository working tree:
 
 ```bash
 rpack rebase change.rpack ./other-repo -o change-rebased.rpack
 ```
+
+`rebase` applies the package to a detached worktree at the target repository
+HEAD, then writes a new working-tree patch package. The rebased package currently
+contains one aggregate patch entry, even if the input package had multiple
+ordered patches.
 
 Inspect a package without applying it:
 
@@ -201,7 +302,20 @@ rpack apply change.rpack --allow-existing-added-files skip
 rpack apply change.rpack --allow-existing-added-files overwrite
 ```
 
-By default, `rpack` fails on added-file conflicts (`abort`).
+By default, `rpack` fails on added-file conflicts (`abort`). The same conflict
+resolution modes are accepted by `check`, `diagnose`, `rebase`, and `apply`;
+`as-modify` is accepted as an alias for `modify`.
+
+Current text-file conflict behavior:
+
+- `abort` reports the conflict and stops.
+- `skip` removes that added-file block from the temporary patch when target
+  content differs.
+- `modify`, `as-modify`, and `overwrite` rewrite the added-file block as a
+  modify patch against the existing target text file.
+
+These modes do not overwrite binary or non-text added-file conflicts; those
+still fail when Git cannot apply them safely.
 
 Open a package with a guided inspect/check/apply flow:
 
@@ -343,6 +457,11 @@ generated outputs, `.rpack` files, common secret markers, local machine paths,
 large hunks, no-final-newline markers, and trailing whitespace. Lint does not
 modify the target repository.
 
+Lint errors include generated or unsafe package paths such as `logs/`,
+`artifacts/`, `release/`, `bin/`, `obj/`, `.env`, `.key`, `.pem`, `.pdb`,
+`.exe`, `.dll`, `.rpack`, `.user`, and `.suo`. Lint also warns on local path
+markers such as `D:\Git\`, `C:\Users\`, and `/home/`.
+
 Source commit mismatch is a warning by default. This is intentional: `rpack` is meant to apply patches to compatible working trees, even when Git history differs.
 
 Use `--strict-base` when the target repository must be at the recorded source base commit:
@@ -366,6 +485,8 @@ rpack undo --allow-dirty
 
 `--path-prefix` is applied only at check/apply time after package checksum
 verification. It does not modify the `.rpack` file or its manifest.
+The prefix must be a relative safe path. Absolute paths and prefixes containing
+`..` are rejected.
 
 Default whitespace-compatible context matching changes only Git patch context
 matching. It does not skip checksum verification, clean-tree checks, base
@@ -395,9 +516,47 @@ checksums.sha256
 README.md
 ```
 
+Only these archive parts are required by the current reader:
+
+- `manifest.json`
+- one or more patch files referenced by `manifest.json`
+- a matching `Sha256` value in each manifest patch entry
+
+`checksums.sha256` and package `README.md` are recommended for humans and future
+tooling, but they are not currently required for validation.
+
 Packages may contain multiple patch files. The `Patches` array in `manifest.json`
 is ordered. `rpack` checks and applies patches in that order, and `rpack undo`
 reverses the same patch list in reverse order.
+
+Manifest validation rules:
+
+- `Format` must be `rpack-v1`.
+- `Mode` must be `working-tree-patch`.
+- `Patches` must contain at least one entry.
+- each patch entry must have non-empty `Path` and `Sha256`.
+- each patch `Kind` must be `git-diff`.
+- patch paths must be relative archive paths and must not contain `..`.
+- every declared patch path must exist in the archive.
+- the patch bytes must match the declared SHA-256 value.
+
+Minimal valid manifest:
+
+```json
+{
+  "Format": "rpack-v1",
+  "Mode": "working-tree-patch",
+  "RequiresCleanTree": true,
+  "Patches": [
+    {
+      "Path": "patches/change.patch",
+      "Kind": "git-diff",
+      "Sha256": "<lowercase-sha256-of-patches/change.patch>"
+    }
+  ],
+  "Validation": []
+}
+```
 
 Example manifest:
 
@@ -446,6 +605,10 @@ included, each item uses the `Name`, `Command`, and `Optional` fields:
   }
 ]
 ```
+
+In the current MVP, `Validation` entries are package metadata only. `rpack`
+validates that the manifest shape is correct, but it does not execute these
+commands yet.
 
 ## Local State
 
