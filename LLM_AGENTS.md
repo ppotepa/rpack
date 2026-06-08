@@ -254,6 +254,16 @@ Agents should prefer the fuller form:
 
 `BaseCommit` and `Source.BaseCommit` are diagnostic by default. A mismatch is a warning unless the user applies with `--strict-base`.
 
+`Validation` must be an array of objects, not an array of strings. Prefer `"Validation": []` unless the package intentionally declares validation commands. If commands are included, each entry must have this shape:
+
+```json
+{
+  "Name": "Build",
+  "Command": "dotnet build",
+  "Optional": false
+}
+```
+
 To include multiple patches, add more objects to `Patches` in the exact order they should be applied.
 
 ### checksums.sha256

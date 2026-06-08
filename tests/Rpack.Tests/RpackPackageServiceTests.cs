@@ -555,6 +555,69 @@ public class RpackPackageServiceTests
     }
 
     [Fact]
+    public void Inspect_ReadsValidationObjectsFromManifest()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        InitializeRepository(source);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+
+        var packagePath = Path.Combine(workspace.Path, "validation-objects.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var manifest = ReadZipEntry(packagePath, "manifest.json")
+            .Replace(
+                "\"Validation\": []",
+                "\"Validation\": [{ \"Name\": \"Build\", \"Command\": \"dotnet build\", \"Optional\": false }]",
+                StringComparison.Ordinal);
+        ReplaceZipEntry(packagePath, "manifest.json", manifest);
+
+        var inspection = service.Inspect(packagePath);
+
+        Assert.True(create.Success, create.Message);
+        var validation = Assert.Single(inspection.Manifest.Validation);
+        Assert.Equal("Build", validation.Name);
+        Assert.Equal("dotnet build", validation.Command);
+        Assert.False(validation.Optional);
+    }
+
+    [Fact]
+    public void Check_ExplainsValidationStringArrayIsInvalid()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+
+        var packagePath = Path.Combine(workspace.Path, "validation-strings.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath
+        });
+        var manifest = ReadZipEntry(packagePath, "manifest.json")
+            .Replace("\"Validation\": []", "\"Validation\": [\"dotnet build\"]", StringComparison.Ordinal);
+        ReplaceZipEntry(packagePath, "manifest.json", manifest);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => service.Check(new CheckPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        }));
+
+        Assert.True(create.Success, create.Message);
+        Assert.Contains("Validation must be an array of objects", exception.Message);
+        Assert.Contains("Validation: []", exception.Message);
+    }
+
+    [Fact]
     public void Check_FailsWhenManifestContainsUnsafePatchPath()
     {
         using var workspace = new TempWorkspace();
