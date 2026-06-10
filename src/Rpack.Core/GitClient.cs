@@ -336,6 +336,43 @@ public sealed class GitClient
 
         return RpackResult.Ok("Worktree removed.");
     }
+    public RpackResult StagePaths(string repositoryPath, IReadOnlyList<string> paths)
+    {
+        if (paths.Count == 0)
+        {
+            return RpackResult.Fail("No paths provided to stage.");
+        }
+
+        var args = new List<string> { "add", "--" };
+        args.AddRange(paths.Select(NormalizeGitPath));
+        var result = _processRunner.Run("git", args, repositoryPath);
+        return result.Success
+            ? RpackResult.Ok("Paths staged.")
+            : RpackResult.Fail(result.CombinedOutput);
+    }
+
+    public RpackResult Commit(string repositoryPath, string message)
+    {
+        var result = _processRunner.Run("git", ["commit", "-m", message], repositoryPath);
+        return result.Success
+            ? RpackResult.Ok("Commit created.")
+            : RpackResult.Fail(result.CombinedOutput);
+    }
+
+    public IReadOnlyList<string> GetTrackedChangedPaths(string repositoryPath)
+    {
+        RefreshIndex(repositoryPath);
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        AddDiffPaths(repositoryPath, ["diff", "--name-only"], paths);
+        AddDiffPaths(repositoryPath, ["diff", "--cached", "--name-only"], paths);
+        return paths.ToArray();
+    }
+
+    public string GetHeadCommit(string repositoryPath)
+    {
+        return ResolveCommit(repositoryPath, "HEAD");
+    }
+
 }
 
 public sealed record GitRepository(string RootPath, string StatePath);

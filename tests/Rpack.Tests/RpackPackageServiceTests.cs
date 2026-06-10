@@ -714,6 +714,130 @@ public class RpackPackageServiceTests
         Assert.True(File.Exists(Path.Combine(target, "extra.txt")));
     }
 
+
+    [Fact]
+    public void Inspect_ReadsPreAndPostActionsFromManifest()
+    {
+        using var workspace = new TempWorkspace();
+        var packagePath = Path.Combine(workspace.Path, "actions.rpack");
+        var patch = """
+            diff --git a/hello.txt b/hello.txt
+            --- a/hello.txt
+            +++ b/hello.txt
+            @@ -1 +1 @@
+            -one
+            +two
+            """;
+        WriteManualPackageWithActions(
+            packagePath,
+            "[{ \"Name\": \"Preflight\", \"Kind\": \"command\", \"Command\": \"echo pre\", \"Optional\": false }]",
+            "[{ \"Name\": \"Commit\", \"Kind\": \"rpack.commit\", \"Message\": \"rpack: apply {PackageTitle}\", \"Optional\": false }]",
+            ("patches/change.patch", patch));
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+
+        var inspection = service.Inspect(packagePath);
+
+        var pre = Assert.Single(inspection.Manifest.PreActions);
+        var post = Assert.Single(inspection.Manifest.PostActions);
+        Assert.Equal("Preflight", pre.Name);
+        Assert.Equal("command", pre.Kind);
+        Assert.Equal("Commit", post.Name);
+        Assert.Equal("rpack.commit", post.Kind);
+    }
+
+    [Fact]
+    public void Apply_DoesNotPatchWhenRequiredPreActionFails()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+        var patch = GitOutput(source, "diff", "--binary");
+        var packagePath = Path.Combine(workspace.Path, "pre-fails.rpack");
+        WriteManualPackageWithActions(
+            packagePath,
+            "[{ \"Name\": \"Stop\", \"Kind\": \"command\", \"Command\": \"exit 23\", \"Optional\": false }]",
+            "[]",
+            ("patches/change.patch", patch));
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.False(apply.Success);
+        Assert.Contains("PreAction failed", apply.Message);
+        Assert.Equal("one", File.ReadAllText(Path.Combine(target, "hello.txt")));
+    }
+
+    [Fact]
+    public void Apply_RunsPostActionAfterPatch()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+        var patch = GitOutput(source, "diff", "--binary");
+        var packagePath = Path.Combine(workspace.Path, "post-runs.rpack");
+        WriteManualPackageWithActions(
+            packagePath,
+            "[]",
+            "[{ \"Name\": \"Marker\", \"Kind\": \"command\", \"Command\": \"echo done > rpack-action-marker.txt\", \"Optional\": false }]",
+            ("patches/change.patch", patch));
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.True(apply.Success, apply.Message);
+        Assert.Equal("two", File.ReadAllText(Path.Combine(target, "hello.txt")));
+        Assert.True(File.Exists(Path.Combine(target, "rpack-action-marker.txt")));
+    }
+
+    [Fact]
+    public void Apply_RpackCommitStagesOnlyPackagePaths()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        CopyDirectory(source, target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+        File.WriteAllText(Path.Combine(target, "extra.txt"), "local dirty");
+        var patch = GitOutput(source, "diff", "--binary");
+        var packagePath = Path.Combine(workspace.Path, "commit.rpack");
+        WriteManualPackageWithActions(
+            packagePath,
+            "[]",
+            "[{ \"Name\": \"Commit\", \"Kind\": \"rpack.commit\", \"Message\": \"rpack: test commit\", \"Optional\": false }]",
+            ("patches/change.patch", patch));
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target,
+            AllowDirty = true
+        });
+        var committedFiles = GitOutput(target, "show", "--name-only", "--format=", "HEAD");
+        var status = GitOutput(target, "status", "--porcelain", "--untracked-files=all");
+
+        Assert.True(apply.Success, apply.Message);
+        Assert.Contains("Commit:", apply.Message);
+        Assert.Contains("hello.txt", committedFiles);
+        Assert.DoesNotContain("extra.txt", committedFiles);
+        Assert.Contains("?? extra.txt", status);
+    }
+
     private static void InitializeRepository(string path)
     {
         Git(path, "init");
@@ -783,6 +907,55 @@ public class RpackPackageServiceTests
         using var stream = entry.Open();
         using var writer = new StreamWriter(stream);
         writer.Write(content);
+    }
+
+    private static void WriteManualPackageWithActions(
+        string packagePath,
+        string preActionsJson,
+        string postActionsJson,
+        params (string Path, string Content)[] patches)
+    {
+        using var archive = ZipFile.Open(packagePath, ZipArchiveMode.Create);
+        var patchJson = new List<string>();
+        var checksums = new List<string>();
+
+        foreach (var patch in patches)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(patch.Content);
+            var sha = Sha256.ForBytes(bytes);
+            WriteZipEntry(archive, patch.Path, bytes);
+            checksums.Add($"{sha}  {patch.Path}");
+            patchJson.Add($$"""
+                {
+                  "Path": "{{patch.Path}}",
+                  "Kind": "git-diff",
+                  "Sha256": "{{sha}}"
+                }
+                """);
+        }
+
+        var manifest = $$"""
+            {
+              "Format": "rpack-v1",
+              "Id": "manual-test-package",
+              "Title": "Manual test package",
+              "Description": "",
+              "CreatedAtUtc": "2026-06-06T00:00:00Z",
+              "BaseCommit": "",
+              "RequiresCleanTree": true,
+              "Mode": "working-tree-patch",
+              "Patches": [
+                {{string.Join($",{Environment.NewLine}", patchJson)}}
+              ],
+              "PreActions": {{preActionsJson}},
+              "PostActions": {{postActionsJson}},
+              "Validation": []
+            }
+            """;
+
+        WriteZipEntry(archive, "manifest.json", manifest);
+        WriteZipEntry(archive, "checksums.sha256", string.Join(Environment.NewLine, checksums));
+        WriteZipEntry(archive, "README.md", "# Manual test package");
     }
 
     private static void WriteManualPackage(string packagePath, params (string Path, string Content)[] patches)

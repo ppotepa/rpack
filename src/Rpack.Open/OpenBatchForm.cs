@@ -79,6 +79,7 @@ internal sealed class OpenBatchForm : Form
                 existing.RepositoryOption = request.RepositoryPath ?? existing.RepositoryOption;
                 existing.PathPrefix = request.PathPrefix ?? existing.PathPrefix;
                 existing.StrictBase = existing.StrictBase || request.StrictBase;
+                existing.NoActions = existing.NoActions || request.NoActions;
                 existing.IgnoreSpaceChange = request.StrictWhitespace
                     ? false
                     : existing.IgnoreSpaceChange || request.IgnoreSpaceChange || _ignoreSpaceChangeBox.Checked;
@@ -98,6 +99,7 @@ internal sealed class OpenBatchForm : Form
                 AllowDirty = request.AllowDirty,
                 DirtyReason = request.DirtyReason,
                 StrictBase = request.StrictBase,
+                NoActions = request.NoActions,
                 IgnoreSpaceChange = request.StrictWhitespace
                     ? false
                     : request.IgnoreSpaceChange || _ignoreSpaceChangeBox.Checked
@@ -436,7 +438,8 @@ internal sealed class OpenBatchForm : Form
                 StrictBase = job.StrictBase,
                 PathPrefix = job.PathPrefix,
                 AllowedDirtyPaths = GetPackageDirtyException(job.RepositoryPath, job.PackagePath),
-                IgnoreSpaceChange = job.IgnoreSpaceChange
+                IgnoreSpaceChange = job.IgnoreSpaceChange,
+                SkipActions = job.NoActions
             });
 
             if (!apply.Success)
@@ -447,7 +450,7 @@ internal sealed class OpenBatchForm : Form
 
             job.State = PackageState.Applied;
             job.Message = apply.Message;
-            job.Details = BuildSuccessDetails(job, "Apply", $"{apply.Message}{Environment.NewLine}{Environment.NewLine}Review the working tree before committing. Rollback: rpack undo");
+            job.Details = BuildSuccessDetails(job, "Apply", $"{apply.Message}{Environment.NewLine}{Environment.NewLine}Rollback working tree: rpack undo");
         }
         catch (Exception ex)
         {
@@ -693,6 +696,7 @@ internal sealed class OpenBatchForm : Form
             Repository: {job.RepositoryPath}
             Mode: {(job.AllowDirty ? $"Dirty allowed ({job.DirtyReason})" : "Clean required")}
             Whitespace context: {(job.IgnoreSpaceChange ? "whitespace-compatible" : "strict")}
+            Actions: {(job.NoActions ? "disabled" : "enabled")}
             Path prefix: {(string.IsNullOrWhiteSpace(job.PathPrefix) ? "(none)" : job.PathPrefix)}
             Strict base: {job.StrictBase}
 
@@ -723,6 +727,7 @@ internal sealed class OpenBatchForm : Form
             Repository: {job.RepositoryPath ?? job.RepositoryOption ?? "(not resolved)"}
             Mode: {(job.AllowDirty ? $"Dirty allowed ({job.DirtyReason})" : "Clean required")}
             Whitespace context: {(job.IgnoreSpaceChange ? "whitespace-compatible" : "strict")}
+            Actions: {(job.NoActions ? "disabled" : "enabled")}
             Path prefix: {(string.IsNullOrWhiteSpace(job.PathPrefix) ? "(none)" : job.PathPrefix)}
             Strict base: {job.StrictBase}
 
@@ -800,6 +805,7 @@ internal sealed class OpenBatchForm : Form
             job.AllowDirty ? "Dirty allowed" : "Clean required"
         };
         parts.Add(job.IgnoreSpaceChange ? "Whitespace compatible" : "Strict context");
+        parts.Add(job.NoActions ? "Actions off" : "Actions on");
 
         return string.Join(", ", parts);
     }
@@ -824,6 +830,7 @@ internal sealed class OpenBatchForm : Form
         public string? PathPrefix { get; set; }
         public bool AllowDirty { get; set; }
         public bool StrictBase { get; set; }
+        public bool NoActions { get; set; }
         public bool IgnoreSpaceChange { get; set; }
         public string DirtyReason { get; set; } = "";
         public bool Selected { get; set; } = true;

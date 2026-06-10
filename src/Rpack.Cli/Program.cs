@@ -94,6 +94,11 @@ static int RunInspect(string[] args, RpackPackageService service)
     Console.WriteLine($"- lines removed: {diff.RemovedLines}");
     Console.WriteLine($"- total diff hunks: {diff.HunkCount}");
     Console.WriteLine($"- binary files: {diff.BinaryFileCount}");
+    Console.WriteLine($"- pre actions: {inspection.Manifest.PreActions.Count}");
+    Console.WriteLine($"- post actions: {inspection.Manifest.PostActions.Count}");
+
+    PrintActions("PreActions", inspection.Manifest.PreActions);
+    PrintActions("PostActions", inspection.Manifest.PostActions);
 
     if (diff.Patches.Count > 0)
     {
@@ -193,7 +198,8 @@ static int RunApply(string[] args, RpackPackageService service)
         StrictBase = options.Has("--strict-base"),
         PathPrefix = options.Value("--path-prefix"),
         AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
-        IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
+        IgnoreSpaceChange = ResolveIgnoreSpaceChange(options),
+        SkipActions = options.Has("--no-actions")
     });
 
     return PrintResult(result);
@@ -294,7 +300,8 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
         PathPrefix = pathPrefix,
         AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
         AllowedDirtyPaths = allowedDirtyPaths,
-        IgnoreSpaceChange = ignoreSpaceChange
+        IgnoreSpaceChange = ignoreSpaceChange,
+        SkipActions = options.Has("--no-actions")
     });
 
     return PrintResult(apply);
@@ -425,6 +432,10 @@ static void PrintOpenSummary(PackageInspection inspection, string repositoryPath
     Console.WriteLine($"binary files: {diff.BinaryFileCount}");
     Console.WriteLine($"allowDirty: {allowDirty}");
     Console.WriteLine($"patchContext: {(ignoreSpaceChange ? "whitespace-compatible" : "strict")}");
+    Console.WriteLine($"preActions: {inspection.Manifest.PreActions.Count}");
+    Console.WriteLine($"postActions: {inspection.Manifest.PostActions.Count}");
+    PrintActions("PreActions", inspection.Manifest.PreActions);
+    PrintActions("PostActions", inspection.Manifest.PostActions);
     if (!string.IsNullOrWhiteSpace(pathPrefix))
     {
         Console.WriteLine($"pathPrefix: {pathPrefix}");
@@ -442,6 +453,24 @@ static void PrintOpenSummary(PackageInspection inspection, string repositoryPath
                 Console.WriteLine($"    {file.Status,-8} +{file.AddedLines,-4} -{file.RemovedLines,-4} {file.Path}");
             }
         }
+    }
+}
+
+static void PrintActions(string title, IReadOnlyList<RpackAction> actions)
+{
+    if (actions.Count == 0)
+    {
+        return;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine(title + ":");
+    foreach (var action in actions)
+    {
+        var target = string.IsNullOrWhiteSpace(action.Path)
+            ? action.Command
+            : action.Path;
+        Console.WriteLine($"  - {action.Name} [{action.Kind}] {(action.Optional ? "optional" : "required")} {target}".TrimEnd());
     }
 }
 
@@ -480,8 +509,8 @@ static void PrintHelp()
       rpack diagnose <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
       rpack rebase <package.rpack> [repo] -o <package-rebased.rpack> [--path-prefix <prefix>] [--strict]
       rpack lint <package.rpack> [--path-prefix <prefix>]
-      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--resolve-added-file-conflicts <mode>] [--allow-existing-added-files <mode>]
-      rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--yes]
+      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--no-actions] [--resolve-added-file-conflicts <mode>] [--allow-existing-added-files <mode>]
+      rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--no-actions] [--yes]
       rpack undo [repo] [--allow-dirty]
       rpack history [repo]
       rpack --version
@@ -498,6 +527,7 @@ static void PrintHelp()
       --strict               Require exact patch context whitespace.
       --strict-whitespace    Alias for --strict.
       --ignore-space-change  Compatibility no-op; this is the default mode.
+      --no-actions           Apply patches without running manifest PreActions or PostActions.
       --resolve-added-file-conflicts <mode>  How to resolve add-conflict: abort|skip|modify|overwrite.
       --allow-existing-added-files <mode>    Alias for --resolve-added-file-conflicts.
     """);

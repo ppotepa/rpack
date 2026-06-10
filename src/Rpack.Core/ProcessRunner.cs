@@ -12,7 +12,11 @@ public sealed class ProcessRunner
         _log = log;
     }
 
-    public ProcessResult Run(string fileName, IEnumerable<string> arguments, string workingDirectory)
+    public ProcessResult Run(
+        string fileName,
+        IEnumerable<string> arguments,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var argumentList = arguments.ToArray();
         var startInfo = new ProcessStartInfo(fileName)
@@ -29,6 +33,14 @@ public sealed class ProcessRunner
         foreach (var argument in argumentList)
         {
             startInfo.ArgumentList.Add(argument);
+        }
+
+        if (environmentVariables is not null)
+        {
+            foreach (var (key, value) in environmentVariables)
+            {
+                startInfo.Environment[key] = value;
+            }
         }
 
         using var process = Process.Start(startInfo);

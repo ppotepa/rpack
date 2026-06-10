@@ -9,6 +9,7 @@ internal sealed class OpenRequest
     public bool StrictBase { get; init; }
     public bool IgnoreSpaceChange { get; init; }
     public bool StrictWhitespace { get; init; }
+    public bool NoActions { get; init; }
     public string DirtyReason { get; init; } = "";
 
     public static OpenRequest FromOptions(OpenOptions options, bool shiftPressed)
@@ -44,6 +45,7 @@ internal sealed class OpenRequest
             StrictBase = options.Has("--strict-base"),
             IgnoreSpaceChange = !strictWhitespace,
             StrictWhitespace = strictWhitespace,
+            NoActions = options.Has("--no-actions"),
             DirtyReason = dirtyReason
         };
     }

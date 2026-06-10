@@ -9,6 +9,18 @@ public sealed class RpackPackageService
 {
     private const string ManifestPath = "manifest.json";
     private const string PatchPath = "patches/change.patch";
+    private const string ActionPathPrefix = "actions/";
+    private static readonly HashSet<string> AllowedActionKinds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "powershell",
+        "ps1",
+        "batch",
+        "bat",
+        "cmd",
+        "command",
+        "shell",
+        "rpack.commit"
+    };
     private const string ApplyLogPath = "apply-log.json";
     private static readonly string[] ForbiddenPathPatterns =
     [
@@ -342,6 +354,11 @@ public sealed class RpackPackageService
             AddQualityLintIssues(issues, patch.Path, patchContent, changedFiles);
         }
 
+        foreach (var action in manifest.PreActions.Concat(manifest.PostActions))
+        {
+            AddActionLintIssues(issues, archive, action);
+        }
+
         if (issues.Count == 0)
         {
             return RpackResult.Ok("Lint passed.");
@@ -383,6 +400,7 @@ public sealed class RpackPackageService
         var manifest = ReadManifest(archive);
         var repository = _gitClient.InspectRepository(options.RepositoryPath);
         using var tempPatchSet = ExtractPatchesToTempDirectory(archive, manifest.Patches, NormalizePathPrefix(options.PathPrefix));
+        using var tempActionSet = ExtractActionsToTempDirectory(archive, manifest.PreActions.Concat(manifest.PostActions).ToArray());
         if (!TryParseAddedFileConflictResolution(
                 options.AddedFileConflictResolution,
                 out var addedFileConflictResolution,
@@ -395,6 +413,19 @@ public sealed class RpackPackageService
         if (!existingAddedFiles.Success)
         {
             return existingAddedFiles;
+        }
+
+        var applyId = CreateApplyId();
+        var changedFiles = GetChangedFilesFromPatchSet(tempPatchSet);
+        var actionResults = new List<RpackActionResult>();
+        if (!options.SkipActions)
+        {
+            var preActions = RunActions("pre", manifest.PreActions, tempActionSet, repository.RootPath, manifest, applyId, changedFiles);
+            actionResults.AddRange(preActions.Results);
+            if (!preActions.Success)
+            {
+                return RpackResult.Fail(BuildActionFailureMessage("PreAction failed", preActions.Results));
+            }
         }
 
         var appliedPatches = new List<string>();
@@ -414,8 +445,18 @@ public sealed class RpackPackageService
             appliedPatches.Add(patch.TempPath);
         }
 
-        var applyId = CreateApplyId();
         var storedPackagePath = StoreAppliedPackage(repository, applyId, manifest, tempPatchSet.Patches);
+        ActionExecutionSummary postActions = ActionExecutionSummary.SuccessOnly(Array.Empty<RpackActionResult>());
+        if (!options.SkipActions)
+        {
+            postActions = RunActions("post", manifest.PostActions, tempActionSet, repository.RootPath, manifest, applyId, changedFiles);
+            actionResults.AddRange(postActions.Results);
+        }
+
+        var commitResult = actionResults.LastOrDefault(result =>
+            string.Equals(RpackActionRunner.NormalizeKind(result.Kind), "rpack.commit", StringComparison.OrdinalIgnoreCase)
+            && result.Success
+            && !string.IsNullOrWhiteSpace(result.StandardOutput));
         AppendApplyLog(repository, new RpackApplyLog
         {
             ApplyId = applyId,
@@ -425,10 +466,130 @@ public sealed class RpackPackageService
             BaseCommit = GetManifestBaseCommit(manifest),
             TargetHeadAtApply = _gitClient.ResolveCommit(repository.RootPath, "HEAD"),
             PatchPath = tempPatchSet.Patches.Count == 1 ? $"{storedPackagePath}/{tempPatchSet.Patches[0].ManifestPath}" : "",
-            PackagePath = storedPackagePath
+            PackagePath = storedPackagePath,
+            ActionResults = actionResults,
+            PostActionFailed = !postActions.Success,
+            CommitSha = commitResult?.StandardOutput.Trim() ?? "",
+            CommittedAtUtc = commitResult is null ? "" : DateTimeOffset.UtcNow.ToString("O")
         });
 
-        return RpackResult.Ok($"Package applied. Apply id: {applyId}");
+        if (!postActions.Success)
+        {
+            return RpackResult.Fail(BuildActionFailureMessage($"Package applied. Apply id: {applyId}. PostAction failed", postActions.Results));
+        }
+
+        var suffix = options.SkipActions
+            ? " Actions were skipped."
+            : BuildActionSuccessSuffix(actionResults);
+        return RpackResult.Ok($"Package applied. Apply id: {applyId}{suffix}");
+    }
+
+    private ActionExecutionSummary RunActions(
+        string stage,
+        IReadOnlyList<RpackAction> actions,
+        TempActionSet actionSet,
+        string repositoryPath,
+        RpackManifest manifest,
+        string applyId,
+        IReadOnlyList<string> changedFiles)
+    {
+        var results = new List<RpackActionResult>();
+        var runner = new RpackActionRunner(_gitClient, new ProcessRunner());
+        foreach (var action in actions)
+        {
+            actionSet.ActionPaths.TryGetValue(action.Path, out var extractedActionPath);
+            var result = runner.Run(
+                stage,
+                action,
+                repositoryPath,
+                extractedActionPath,
+                applyId,
+                manifest.Id,
+                manifest.Title,
+                changedFiles);
+            results.Add(result);
+            if (!result.Success && !action.Optional)
+            {
+                return new ActionExecutionSummary(false, results);
+            }
+        }
+
+        return new ActionExecutionSummary(true, results);
+    }
+
+    private static string BuildActionFailureMessage(string prefix, IReadOnlyList<RpackActionResult> results)
+    {
+        var failed = results.FirstOrDefault(result => !result.Success && !result.Optional)
+            ?? results.LastOrDefault(result => !result.Success)
+            ?? results.LastOrDefault();
+        if (failed is null)
+        {
+            return prefix;
+        }
+
+        var details = string.IsNullOrWhiteSpace(failed.Message)
+            ? failed.StandardError
+            : failed.Message;
+        return $"{prefix}: {failed.Stage}/{failed.Name} ({failed.Kind}) exited {failed.ExitCode}.{Environment.NewLine}{details}".TrimEnd();
+    }
+
+    private static string BuildActionSuccessSuffix(IReadOnlyList<RpackActionResult> actionResults)
+    {
+        if (actionResults.Count == 0)
+        {
+            return "";
+        }
+
+        var commit = actionResults.LastOrDefault(result =>
+            string.Equals(RpackActionRunner.NormalizeKind(result.Kind), "rpack.commit", StringComparison.OrdinalIgnoreCase)
+            && result.Success
+            && !string.IsNullOrWhiteSpace(result.StandardOutput));
+        return commit is null
+            ? $" Actions completed: {actionResults.Count}."
+            : $" Actions completed: {actionResults.Count}. Commit: {commit.StandardOutput.Trim()}.";
+    }
+
+    private static IReadOnlyList<string> GetChangedFilesFromPatchSet(TempPatchSet tempPatchSet)
+    {
+        return tempPatchSet.Patches
+            .SelectMany(patch => AnalyzePatch(File.ReadAllText(patch.TempPath, Encoding.UTF8)))
+            .Select(file => NormalizeGitPath(file.Path))
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static TempActionSet ExtractActionsToTempDirectory(ZipArchive archive, IReadOnlyList<RpackAction> actions)
+    {
+        var actionsWithPaths = actions
+            .Where(action => !string.IsNullOrWhiteSpace(action.Path))
+            .GroupBy(action => action.Path, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+        if (actionsWithPaths.Length == 0)
+        {
+            return new TempActionSet("", new Dictionary<string, string>(StringComparer.Ordinal));
+        }
+
+        var tempDirectory = Path.Combine(Path.GetTempPath(), $"rpack-actions-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+        var actionPaths = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var action in actionsWithPaths)
+        {
+            if (!IsSafeArchivePath(action.Path))
+            {
+                throw new InvalidOperationException($"Unsafe action path: {action.Path}");
+            }
+
+            var entry = archive.GetEntry(action.Path) ?? throw new InvalidOperationException($"Action script is missing: {action.Path}");
+            var tempPath = Path.Combine(tempDirectory, action.Path.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
+            entry.ExtractToFile(tempPath, overwrite: true);
+            actionPaths[action.Path] = tempPath;
+        }
+
+        return new TempActionSet(tempDirectory, actionPaths);
     }
 
     public RpackResult Rebase(RebasePackageOptions options)
@@ -620,7 +781,11 @@ public sealed class RpackPackageService
             BaseCommit = log.BaseCommit,
             TargetHeadAtApply = log.TargetHeadAtApply,
             PatchPath = log.PatchPath,
-            PackagePath = log.PackagePath
+            PackagePath = log.PackagePath,
+            ActionResults = log.ActionResults,
+            PostActionFailed = log.PostActionFailed,
+            CommitSha = log.CommitSha,
+            CommittedAtUtc = log.CommittedAtUtc
         };
         WriteApplyLogs(repository, logs);
 
@@ -678,38 +843,128 @@ public sealed class RpackPackageService
             }
         }
 
+        foreach (var action in manifest.PreActions)
+        {
+            var validation = ValidateAction(action, "PreActions");
+            if (!validation.Success)
+            {
+                return validation;
+            }
+        }
+
+        foreach (var action in manifest.PostActions)
+        {
+            var validation = ValidateAction(action, "PostActions");
+            if (!validation.Success)
+            {
+                return validation;
+            }
+        }
+
         return RpackResult.Ok("Manifest is valid.");
+    }
+
+    private static RpackResult ValidateAction(RpackAction action, string listName)
+    {
+        if (string.IsNullOrWhiteSpace(action.Name))
+        {
+            return RpackResult.Fail($"{listName} contains an action with a missing Name.");
+        }
+
+        if (string.IsNullOrWhiteSpace(action.Kind))
+        {
+            return RpackResult.Fail($"{listName}:{action.Name} has a missing Kind.");
+        }
+
+        if (!AllowedActionKinds.Contains(action.Kind))
+        {
+            return RpackResult.Fail($"Unsupported action kind: {action.Kind}");
+        }
+
+        var normalizedKind = RpackActionRunner.NormalizeKind(action.Kind);
+        if (normalizedKind is "powershell" or "batch")
+        {
+            if (string.IsNullOrWhiteSpace(action.Path))
+            {
+                return RpackResult.Fail($"{listName}:{action.Name} requires Path.");
+            }
+
+            if (!IsSafeArchivePath(action.Path) || !NormalizeGitPath(action.Path).StartsWith(ActionPathPrefix, StringComparison.Ordinal))
+            {
+                return RpackResult.Fail($"Unsafe action path: {action.Path}. Actions must live under {ActionPathPrefix}.");
+            }
+
+            if (string.IsNullOrWhiteSpace(action.Sha256))
+            {
+                return RpackResult.Fail($"{listName}:{action.Name} action checksum is missing.");
+            }
+        }
+        else if (normalizedKind == "command")
+        {
+            if (string.IsNullOrWhiteSpace(action.Command))
+            {
+                return RpackResult.Fail($"{listName}:{action.Name} requires Command.");
+            }
+        }
+        else if (normalizedKind == "rpack.commit" && !string.IsNullOrWhiteSpace(action.Path))
+        {
+            return RpackResult.Fail($"{listName}:{action.Name} rpack.commit must not declare Path.");
+        }
+
+        return RpackResult.Ok("Action is valid.");
     }
 
     private static RpackResult VerifyChecksums(ZipArchive archive, RpackManifest manifest)
     {
         foreach (var patch in manifest.Patches)
         {
-            if (!IsSafeArchivePath(patch.Path))
+            var result = VerifyArchiveEntryChecksum(archive, patch.Path, patch.Sha256, "Patch");
+            if (!result.Success)
             {
-                return RpackResult.Fail($"Unsafe archive path: {patch.Path}");
+                return result;
+            }
+        }
+
+        foreach (var action in manifest.PreActions.Concat(manifest.PostActions))
+        {
+            if (string.IsNullOrWhiteSpace(action.Path))
+            {
+                continue;
             }
 
-            var entry = archive.GetEntry(patch.Path);
-            if (entry is null)
+            var result = VerifyArchiveEntryChecksum(archive, action.Path, action.Sha256, "Action");
+            if (!result.Success)
             {
-                return RpackResult.Fail($"Patch is missing: {patch.Path}");
-            }
-
-            using var memory = new MemoryStream();
-            using (var stream = entry.Open())
-            {
-                stream.CopyTo(memory);
-            }
-
-            var actual = Sha256.ForBytes(memory.ToArray());
-            if (!string.Equals(actual, patch.Sha256, StringComparison.OrdinalIgnoreCase))
-            {
-                return RpackResult.Fail($"Checksum mismatch for {patch.Path}.");
+                return result;
             }
         }
 
         return RpackResult.Ok("Checksums are valid.");
+    }
+
+    private static RpackResult VerifyArchiveEntryChecksum(ZipArchive archive, string path, string sha256, string kind)
+    {
+        if (!IsSafeArchivePath(path))
+        {
+            return RpackResult.Fail($"Unsafe archive path: {path}");
+        }
+
+        var entry = archive.GetEntry(path);
+        if (entry is null)
+        {
+            return RpackResult.Fail($"{kind} is missing: {path}");
+        }
+
+        using var memory = new MemoryStream();
+        using (var stream = entry.Open())
+        {
+            stream.CopyTo(memory);
+        }
+
+        var actual = Sha256.ForBytes(memory.ToArray());
+        return string.Equals(actual, sha256, StringComparison.OrdinalIgnoreCase)
+            ? RpackResult.Ok($"{kind} checksum is valid.")
+            : RpackResult.Fail($"Checksum mismatch for {path}.");
     }
 
     private string GetBaseMismatchMessage(string repositoryPath, RpackManifest manifest)
@@ -1217,6 +1472,50 @@ public sealed class RpackPackageService
             {
                 issues.Add(new LintIssue("warning", "local-path", $"{patchPath}: patch content contains local path marker `{marker}`."));
             }
+        }
+    }
+
+    private static void AddActionLintIssues(List<LintIssue> issues, ZipArchive archive, RpackAction action)
+    {
+        var normalizedKind = RpackActionRunner.NormalizeKind(action.Kind);
+        if (normalizedKind is "powershell" or "batch")
+        {
+            if (!NormalizeGitPath(action.Path).StartsWith(ActionPathPrefix, StringComparison.Ordinal))
+            {
+                issues.Add(new LintIssue("error", "unsafe-action-path", $"{action.Name}: action path must live under `{ActionPathPrefix}`."));
+                return;
+            }
+
+            var content = ReadEntryText(archive, action.Path);
+            AddScriptContentLintIssues(issues, action.Path, content);
+        }
+        else if (normalizedKind == "command")
+        {
+            AddScriptContentLintIssues(issues, action.Name, action.Command);
+        }
+    }
+
+    private static void AddScriptContentLintIssues(List<LintIssue> issues, string source, string content)
+    {
+        if (content.Contains("BEGIN PRIVATE KEY", StringComparison.OrdinalIgnoreCase)
+            || SecretAssignmentPattern.IsMatch(content))
+        {
+            issues.Add(new LintIssue("error", "secret-marker", $"{source}: action content contains a likely secret assignment or private key marker."));
+        }
+
+        foreach (var marker in LocalPathMarkers)
+        {
+            if (content.Contains(marker, StringComparison.OrdinalIgnoreCase))
+            {
+                issues.Add(new LintIssue("warning", "local-path", $"{source}: action content contains local path marker `{marker}`."));
+            }
+        }
+
+        if (content.Contains("Invoke-WebRequest", StringComparison.OrdinalIgnoreCase)
+            || content.Contains("curl ", StringComparison.OrdinalIgnoreCase)
+            || content.Contains("iex ", StringComparison.OrdinalIgnoreCase))
+        {
+            issues.Add(new LintIssue("warning", "network-action", $"{source}: action content appears to download or execute remote content."));
         }
     }
 
@@ -1860,6 +2159,31 @@ public sealed class RpackPackageService
 
     private sealed record LintIssue(string Severity, string Code, string Message);
 
+    private sealed record ActionExecutionSummary(bool Success, IReadOnlyList<RpackActionResult> Results)
+    {
+        public static ActionExecutionSummary SuccessOnly(IReadOnlyList<RpackActionResult> results) => new(true, results);
+    }
+
+    private sealed class TempActionSet : IDisposable
+    {
+        public TempActionSet(string directoryPath, IReadOnlyDictionary<string, string> actionPaths)
+        {
+            DirectoryPath = directoryPath;
+            ActionPaths = actionPaths;
+        }
+
+        public string DirectoryPath { get; }
+        public IReadOnlyDictionary<string, string> ActionPaths { get; }
+
+        public void Dispose()
+        {
+            if (!string.IsNullOrWhiteSpace(DirectoryPath) && Directory.Exists(DirectoryPath))
+            {
+                Directory.Delete(DirectoryPath, recursive: true);
+            }
+        }
+    }
+
     private sealed record TempPatch(string ManifestPath, string TempPath);
 
     private sealed class TempPatchSet : IDisposable
@@ -1935,6 +2259,7 @@ public sealed class ApplyPackageOptions
     public string? AddedFileConflictResolution { get; init; }
     public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
     public bool IgnoreSpaceChange { get; init; } = true;
+    public bool SkipActions { get; init; }
 }
 
 public sealed class RebasePackageOptions

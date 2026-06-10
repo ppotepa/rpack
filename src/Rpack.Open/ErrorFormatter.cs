@@ -76,6 +76,18 @@ internal static class ErrorFormatter
                 normalized);
         }
 
+        if (normalized.Contains("PreAction failed", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("PostAction failed", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("Unsupported action kind", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("Action script is missing", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PackageProblem(
+                "Package action failed",
+                "The package patch may be valid, but one of its manifest actions failed or could not be prepared.",
+                "Review the action details. Use --no-actions only when you intentionally want to apply the patch without lifecycle scripts.",
+                normalized);
+        }
+
         if (normalized.Contains("Patch dry-run failed", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("Patch dry-run apply failed", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("Patch apply failed", StringComparison.OrdinalIgnoreCase)

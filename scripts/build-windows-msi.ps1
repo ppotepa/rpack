@@ -1,5 +1,5 @@
 param(
-    [string] $Version = "0.1.17",
+    [string] $Version = "0.1.18",
     [string] $Runtime = "win-x64",
     [string] $Configuration = "Release",
     [string] $OutputDirectory = "artifacts",
