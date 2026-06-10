@@ -1,5 +1,5 @@
 param(
-    [string] $Version = "0.1.18",
+    [string] $Version = "0.1.19",
     [string] $Runtime = "win-x64",
     [string] $Configuration = "Release",
     [string] $OutputDirectory = "artifacts",
@@ -209,3 +209,4 @@ if ($Variant -eq "all" -or $Variant -eq "framework-dependent") {
         -SelfContained $false `
         -Description "rpack Windows Installer (framework-dependent, requires .NET 10 Desktop Runtime x64)"
 }
+
