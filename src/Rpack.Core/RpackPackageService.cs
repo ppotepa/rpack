@@ -420,7 +420,16 @@ public sealed class RpackPackageService
         var actionResults = new List<RpackActionResult>();
         if (!options.SkipActions)
         {
-            var preActions = RunActions("pre", manifest.PreActions, tempActionSet, repository.RootPath, manifest, applyId, changedFiles);
+            var preActions = RunActions(
+                "pre",
+                manifest.PreActions,
+                tempActionSet,
+                repository.RootPath,
+                manifest,
+                applyId,
+                changedFiles,
+                options.SelectedPreActions,
+                options.OnActionExecuted);
             actionResults.AddRange(preActions.Results);
             if (!preActions.Success)
             {
@@ -449,7 +458,16 @@ public sealed class RpackPackageService
         ActionExecutionSummary postActions = ActionExecutionSummary.SuccessOnly(Array.Empty<RpackActionResult>());
         if (!options.SkipActions)
         {
-            postActions = RunActions("post", manifest.PostActions, tempActionSet, repository.RootPath, manifest, applyId, changedFiles);
+            postActions = RunActions(
+                "post",
+                manifest.PostActions,
+                tempActionSet,
+                repository.RootPath,
+                manifest,
+                applyId,
+                changedFiles,
+                options.SelectedPostActions,
+                options.OnActionExecuted);
             actionResults.AddRange(postActions.Results);
         }
 
@@ -491,12 +509,23 @@ public sealed class RpackPackageService
         string repositoryPath,
         RpackManifest manifest,
         string applyId,
-        IReadOnlyList<string> changedFiles)
+        IReadOnlyList<string> changedFiles,
+        IReadOnlyList<int>? selectedActionIndices,
+        Action<RpackActionResult>? onActionExecuted)
     {
         var results = new List<RpackActionResult>();
+        var selected = selectedActionIndices is null
+            ? null
+            : new HashSet<int>(selectedActionIndices);
         var runner = new RpackActionRunner(_gitClient, new ProcessRunner());
-        foreach (var action in actions)
+        for (var i = 0; i < actions.Count; i++)
         {
+            if (selected is not null && !selected.Contains(i))
+            {
+                continue;
+            }
+
+            var action = actions[i];
             actionSet.ActionPaths.TryGetValue(action.Path, out var extractedActionPath);
             var result = runner.Run(
                 stage,
@@ -507,6 +536,7 @@ public sealed class RpackPackageService
                 manifest.Id,
                 manifest.Title,
                 changedFiles);
+            onActionExecuted?.Invoke(result);
             results.Add(result);
             if (!result.Success && !action.Optional)
             {
@@ -2260,6 +2290,9 @@ public sealed class ApplyPackageOptions
     public IReadOnlyList<string> AllowedDirtyPaths { get; init; } = [];
     public bool IgnoreSpaceChange { get; init; } = true;
     public bool SkipActions { get; init; }
+    public IReadOnlyList<int>? SelectedPreActions { get; init; }
+    public IReadOnlyList<int>? SelectedPostActions { get; init; }
+    public Action<RpackActionResult>? OnActionExecuted { get; init; }
 }
 
 public sealed class RebasePackageOptions

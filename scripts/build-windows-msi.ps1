@@ -1,5 +1,5 @@
 param(
-    [string] $Version = "0.1.19",
+    [string] $Version = "0.1.20",
     [string] $Runtime = "win-x64",
     [string] $Configuration = "Release",
     [string] $OutputDirectory = "artifacts",
@@ -25,7 +25,16 @@ function ConvertTo-WixId {
         $safe = $safe.Substring(0, 48)
     }
 
-    $hash = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Value))).Substring(0, 8)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+        $hashBytes = $sha256.ComputeHash($bytes)
+        $hex = [BitConverter]::ToString($hashBytes).Replace("-", "")
+        $hash = $hex.Substring(0, 8)
+    }
+    finally {
+        $sha256.Dispose()
+    }
     return "${Prefix}_${safe}_$hash"
 }
 
@@ -209,4 +218,3 @@ if ($Variant -eq "all" -or $Variant -eq "framework-dependent") {
         -SelfContained $false `
         -Description "rpack Windows Installer (framework-dependent, requires .NET 10 Desktop Runtime x64)"
 }
-

@@ -389,6 +389,52 @@ internal sealed class OpenBatchForm : Form
             return;
         }
 
+        foreach (var job in candidates)
+        {
+            if (job.NoActions)
+            {
+                job.SelectedPreActionIndexes = null;
+                job.SelectedPostActionIndexes = null;
+                continue;
+            }
+
+            if (job.Inspection is null)
+            {
+                job.Fail(
+                    "Apply",
+                    new PackageProblem(
+                        "Package inspection missing",
+                        "Manifest could not be read before apply.",
+                        "Recheck the package.",
+                        "Inspection is null."));
+                RefreshList();
+                return;
+            }
+
+            var preActionCount = job.Inspection.Manifest.PreActions.Count;
+            var postActionCount = job.Inspection.Manifest.PostActions.Count;
+            if (preActionCount == 0 && postActionCount == 0)
+            {
+                job.SelectedPreActionIndexes = null;
+                job.SelectedPostActionIndexes = null;
+                continue;
+            }
+
+            var selection = ShowActionSelectionDialog(job);
+            if (!selection.HasValue)
+            {
+                MessageBox.Show(
+                    "Apply was canceled.",
+                    "rpack packages",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            job.SelectedPreActionIndexes = selection.Value.PreActionIndexes;
+            job.SelectedPostActionIndexes = selection.Value.PostActionIndexes;
+        }
+
         SetButtons(enabled: false);
         try
         {
@@ -439,7 +485,10 @@ internal sealed class OpenBatchForm : Form
                 PathPrefix = job.PathPrefix,
                 AllowedDirtyPaths = GetPackageDirtyException(job.RepositoryPath, job.PackagePath),
                 IgnoreSpaceChange = job.IgnoreSpaceChange,
-                SkipActions = job.NoActions
+                SkipActions = job.NoActions,
+                SelectedPreActions = job.NoActions ? null : job.SelectedPreActionIndexes,
+                SelectedPostActions = job.NoActions ? null : job.SelectedPostActionIndexes,
+                OnActionExecuted = result => AppendActionLog(result)
             });
 
             if (!apply.Success)
@@ -661,6 +710,208 @@ internal sealed class OpenBatchForm : Form
             : argument;
     }
 
+    private (int[] PreActionIndexes, int[] PostActionIndexes)? ShowActionSelectionDialog(PackageJob job)
+    {
+        var manifest = job.Inspection?.Manifest;
+        if (manifest is null)
+        {
+            return ([], []);
+        }
+
+        using var form = new Form
+        {
+            Text = "Select triggers",
+            StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false,
+            MaximizeBox = false,
+            Size = new Size(680, 540),
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            AutoScaleMode = AutoScaleMode.Font
+        };
+
+        var preList = new CheckedListBox
+        {
+            CheckOnClick = true,
+            Dock = DockStyle.Fill,
+            BorderStyle = BorderStyle.FixedSingle,
+            IntegralHeight = false
+        };
+        var preIndexes = manifest.PreActions
+            .Select((action, index) => new ActionSelectionItem(index, $"[{index + 1}] {DescribeAction(action)}"))
+            .ToArray();
+        foreach (var action in preIndexes)
+        {
+            preList.Items.Add(action, true);
+        }
+
+        var postList = new CheckedListBox
+        {
+            CheckOnClick = true,
+            Dock = DockStyle.Fill,
+            BorderStyle = BorderStyle.FixedSingle,
+            IntegralHeight = false
+        };
+        var postIndexes = manifest.PostActions
+            .Select((action, index) => new ActionSelectionItem(index, $"[{index + 1}] {DescribeAction(action)}"))
+            .ToArray();
+        foreach (var action in postIndexes)
+        {
+            postList.Items.Add(action, true);
+        }
+
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 2,
+            Padding = new Padding(8),
+            AutoSize = false
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+
+        var preGroup = new GroupBox
+        {
+            Text = $"PreActions ({preIndexes.Length})",
+            Dock = DockStyle.Fill
+        };
+        preGroup.Controls.Add(preList);
+
+        var postGroup = new GroupBox
+        {
+            Text = $"PostActions ({postIndexes.Length})",
+            Dock = DockStyle.Fill
+        };
+        postGroup.Controls.Add(postList);
+
+        root.Controls.Add(preGroup, 0, 0);
+        root.Controls.Add(postGroup, 1, 0);
+        if (preIndexes.Length == 0 && postIndexes.Length > 0)
+        {
+            root.SetColumnSpan(postGroup, 2);
+            postGroup.Text = $"PostActions ({postIndexes.Length})";
+            root.Controls.Remove(preGroup);
+        }
+        else if (preIndexes.Length > 0 && postIndexes.Length == 0)
+        {
+            root.SetColumnSpan(preGroup, 2);
+            preGroup.Text = $"PreActions ({preIndexes.Length})";
+            root.Controls.Remove(postGroup);
+        }
+
+        var actions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false
+        };
+        var applyButton = new Button { Text = "Apply", Width = 100, Height = 30, DialogResult = DialogResult.OK };
+        var cancelButton = new Button { Text = "Cancel", Width = 100, Height = 30, DialogResult = DialogResult.Cancel };
+        applyButton.Click += (_, _) => form.Close();
+        cancelButton.Click += (_, _) => form.Close();
+        actions.Controls.Add(cancelButton);
+        actions.Controls.Add(applyButton);
+        actions.Padding = new Padding(4);
+        form.AcceptButton = applyButton;
+        form.CancelButton = cancelButton;
+
+        var buttonPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Height = 46
+        };
+        buttonPanel.Controls.Add(actions);
+        root.Controls.Add(buttonPanel, 0, 1);
+        root.SetColumnSpan(buttonPanel, 2);
+
+        form.Controls.Add(root);
+        form.Shown += (_, _) =>
+        {
+            var maxHeight = Math.Max(0, form.Height - buttonPanel.Height - 52);
+            preList.Height = maxHeight;
+            postList.Height = maxHeight;
+        };
+
+        if (form.ShowDialog(this) != DialogResult.OK)
+        {
+            return null;
+        }
+
+        int[] selectedPre = [.. preIndexes
+            .Where((_, index) => preList.GetItemChecked(index))
+            .Select(item => item.ActionIndex)];
+        int[] selectedPost = [.. postIndexes
+            .Where((_, index) => postList.GetItemChecked(index))
+            .Select(item => item.ActionIndex)];
+
+        return (selectedPre, selectedPost);
+    }
+
+    private static string DescribeAction(RpackAction action)
+    {
+        var target = string.IsNullOrWhiteSpace(action.Path)
+            ? action.Command
+            : action.Path;
+        var targetText = string.IsNullOrWhiteSpace(target) ? "" : $" {target}";
+        return $"{action.Name} [{action.Kind}] {(action.Optional ? "optional" : "required")}{targetText}".Trim();
+    }
+
+    private void AppendActionLog(RpackActionResult result)
+    {
+        if (IsDisposed || Disposing)
+        {
+            return;
+        }
+
+        if (InvokeRequired || !IsHandleCreated)
+        {
+            try
+            {
+                BeginInvoke(() => AppendActionLog(result));
+            }
+            catch (InvalidOperationException)
+            {
+                return;
+            }
+
+            return;
+        }
+
+        var started = DateTimeOffset.TryParse(result.StartedAtUtc, out var startedAt)
+            ? startedAt.ToLocalTime().ToString("HH:mm:ss")
+            : DateTimeOffset.UtcNow.ToLocalTime().ToString("HH:mm:ss");
+        var status = result.Success ? "OK" : "FAILED";
+        var builder = new StringBuilder();
+        builder.AppendLine($"[{started}] action {result.Stage}/{result.Name} [{result.Kind}] ({status}, exit {result.ExitCode})");
+        builder.AppendLine($"optional: {(result.Optional ? "yes" : "no")}");
+
+        if (!string.IsNullOrWhiteSpace(result.Message))
+        {
+            builder.AppendLine("message:");
+            builder.AppendLine(result.Message.TrimEnd());
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+        {
+            builder.AppendLine("stdout:");
+            builder.AppendLine(result.StandardOutput.TrimEnd());
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.StandardError))
+        {
+            builder.AppendLine("stderr:");
+            builder.AppendLine(result.StandardError.TrimEnd());
+        }
+
+        if (_consoleLog.TextLength > 0)
+        {
+            _consoleLog.AppendText(Environment.NewLine);
+        }
+
+        _consoleLog.AppendText(builder.ToString().TrimEnd());
+        _consoleLog.AppendText(Environment.NewLine);
+    }
+
     private static string BuildSuccessDetails(PackageJob job, string stage, string message)
     {
         var inspection = job.Inspection;
@@ -696,7 +947,7 @@ internal sealed class OpenBatchForm : Form
             Repository: {job.RepositoryPath}
             Mode: {(job.AllowDirty ? $"Dirty allowed ({job.DirtyReason})" : "Clean required")}
             Whitespace context: {(job.IgnoreSpaceChange ? "whitespace-compatible" : "strict")}
-            Actions: {(job.NoActions ? "disabled" : "enabled")}
+            Actions: {BuildActionSelectionText(job)}
             Path prefix: {(string.IsNullOrWhiteSpace(job.PathPrefix) ? "(none)" : job.PathPrefix)}
             Strict base: {job.StrictBase}
 
@@ -727,7 +978,7 @@ internal sealed class OpenBatchForm : Form
             Repository: {job.RepositoryPath ?? job.RepositoryOption ?? "(not resolved)"}
             Mode: {(job.AllowDirty ? $"Dirty allowed ({job.DirtyReason})" : "Clean required")}
             Whitespace context: {(job.IgnoreSpaceChange ? "whitespace-compatible" : "strict")}
-            Actions: {(job.NoActions ? "disabled" : "enabled")}
+            Actions: {BuildActionSelectionText(job)}
             Path prefix: {(string.IsNullOrWhiteSpace(job.PathPrefix) ? "(none)" : job.PathPrefix)}
             Strict base: {job.StrictBase}
 
@@ -805,9 +1056,28 @@ internal sealed class OpenBatchForm : Form
             job.AllowDirty ? "Dirty allowed" : "Clean required"
         };
         parts.Add(job.IgnoreSpaceChange ? "Whitespace compatible" : "Strict context");
-        parts.Add(job.NoActions ? "Actions off" : "Actions on");
+        parts.Add(BuildActionSelectionText(job));
 
         return string.Join(", ", parts);
+    }
+
+    private static string BuildActionSelectionText(PackageJob job)
+    {
+        if (job.NoActions)
+        {
+            return "Actions disabled";
+        }
+
+        if (job.Inspection is null)
+        {
+            return "Actions enabled";
+        }
+
+        var preTotal = job.Inspection.Manifest.PreActions.Count;
+        var postTotal = job.Inspection.Manifest.PostActions.Count;
+        var selectedPre = (job.SelectedPreActionIndexes?.Count ?? preTotal);
+        var selectedPost = (job.SelectedPostActionIndexes?.Count ?? postTotal);
+        return $"Actions enabled ({selectedPre}/{preTotal} pre, {selectedPost}/{postTotal} post)";
     }
 
     private static Icon? LoadAppIcon()
@@ -836,6 +1106,8 @@ internal sealed class OpenBatchForm : Form
         public bool Selected { get; set; } = true;
         public PackageState State { get; set; } = PackageState.Pending;
         public PackageInspection? Inspection { get; set; }
+        public IReadOnlyList<int>? SelectedPreActionIndexes { get; set; }
+        public IReadOnlyList<int>? SelectedPostActionIndexes { get; set; }
         public string Message { get; set; } = "Waiting for validation.";
         public string Details { get; set; } = "";
 
@@ -853,6 +1125,11 @@ internal sealed class OpenBatchForm : Form
             Message = problem.Title;
             Details = BuildErrorDetails(this, stage, problem);
         }
+    }
+
+    private sealed record ActionSelectionItem(int ActionIndex, string Text)
+    {
+        public override string ToString() => Text;
     }
 
     private enum PackageState

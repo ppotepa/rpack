@@ -94,7 +94,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build Windows MSI locally (both variants at once):
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.17
+.\scripts\build-windows-msi.ps1 -Version 0.1.20
 ```
 
 This creates two installers:
@@ -105,8 +105,8 @@ This creates two installers:
 Build only one variant when needed:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.17 -Variant framework-dependent
-.\scripts\build-windows-msi.ps1 -Version 0.1.17 -Variant self-contained
+.\scripts\build-windows-msi.ps1 -Version 0.1.20 -Variant framework-dependent
+.\scripts\build-windows-msi.ps1 -Version 0.1.20 -Variant self-contained
 ```
 
 ## Usage
