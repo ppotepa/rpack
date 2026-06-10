@@ -835,12 +835,34 @@ public sealed class RpackPackageService
         try
         {
             var manifest = JsonSerializer.Deserialize(stream, RpackJsonContext.Default.RpackManifest);
-            return manifest ?? throw new InvalidOperationException("manifest.json is invalid.");
+            return manifest is null
+                ? throw new InvalidOperationException("manifest.json is invalid.")
+                : NormalizeManifest(manifest);
         }
         catch (JsonException ex) when (ex.Path?.StartsWith("$.Validation", StringComparison.Ordinal) == true)
         {
             throw new InvalidOperationException("manifest.json is invalid: Validation must be an array of objects with Name, Command, and Optional fields. Use Validation: [] when the package does not declare validation commands.", ex);
         }
+    }
+
+    private static RpackManifest NormalizeManifest(RpackManifest manifest)
+    {
+        return new RpackManifest
+        {
+            Format = string.IsNullOrWhiteSpace(manifest.Format) ? "rpack-v1" : manifest.Format,
+            Id = manifest.Id ?? "",
+            Title = manifest.Title ?? "",
+            Description = manifest.Description ?? "",
+            CreatedAtUtc = manifest.CreatedAtUtc ?? "",
+            BaseCommit = manifest.BaseCommit ?? "",
+            Source = manifest.Source,
+            RequiresCleanTree = manifest.RequiresCleanTree,
+            Mode = string.IsNullOrWhiteSpace(manifest.Mode) ? "working-tree-patch" : manifest.Mode,
+            Patches = manifest.Patches ?? [],
+            PreActions = manifest.PreActions ?? [],
+            PostActions = manifest.PostActions ?? [],
+            Validation = manifest.Validation ?? []
+        };
     }
 
     private static RpackResult ValidateManifest(RpackManifest manifest)
