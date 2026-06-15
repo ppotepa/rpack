@@ -159,7 +159,7 @@ public sealed class RpackPackageApplyService
                     Title = manifest.Title,
                     AppliedAtUtc = DateTimeOffset.UtcNow.ToString("O"),
                     BaseCommit = GetManifestBaseCommit(manifest),
-                    TargetHeadAtApply = _gitRepositoryInspector.ResolveCommit(applyPlan.Repository.RootPath, "HEAD"),
+                    TargetHeadAtApply = TryResolveCommit(applyPlan.Repository.RootPath, "HEAD"),
                     PatchPath = applyPlan.TempPatchSet.Patches.Count == 1 ? $"{storedPackagePath}/{applyPlan.TempPatchSet.Patches[0].ManifestPath}" : "",
                     PackagePath = storedPackagePath,
                     ActionResults = actionResults,
@@ -242,6 +242,18 @@ public sealed class RpackPackageApplyService
         return !string.IsNullOrWhiteSpace(manifest.Source?.BaseCommit)
             ? manifest.Source.BaseCommit
             : manifest.BaseCommit;
+    }
+
+    private string TryResolveCommit(string repositoryPath, string revision)
+    {
+        try
+        {
+            return _gitRepositoryInspector.ResolveCommit(repositoryPath, revision);
+        }
+        catch
+        {
+            return "";
+        }
     }
 
     private static string NormalizeActionKind(string kind)

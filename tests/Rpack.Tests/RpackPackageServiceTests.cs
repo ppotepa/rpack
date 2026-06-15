@@ -945,6 +945,40 @@ public class RpackPackageServiceTests
         Assert.Contains("?? extra.txt", status);
     }
 
+    [Fact]
+    public void Apply_AllowsRepositoryWithoutHead_WhenDirtyAllowed()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        InitializeUnbornRepository(target);
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+
+        var packagePath = Path.Combine(workspace.Path, "no-head.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath,
+            Id = "no-head",
+            Title = "No HEAD"
+        });
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target,
+            AllowDirty = true
+        });
+        var history = service.ReadHistory(target);
+
+        Assert.True(create.Success, create.Message);
+        Assert.True(apply.Success, apply.Message);
+        Assert.Equal("two", File.ReadAllText(Path.Combine(target, "hello.txt")));
+        var log = Assert.Single(history);
+        Assert.Equal("", log.TargetHeadAtApply);
+    }
+
     private static void InitializeRepository(string path)
     {
         Git(path, "init");
@@ -953,6 +987,14 @@ public class RpackPackageServiceTests
         File.WriteAllText(Path.Combine(path, "hello.txt"), "one");
         Git(path, "add", "hello.txt");
         Git(path, "commit", "-m", "initial");
+    }
+
+    private static void InitializeUnbornRepository(string path)
+    {
+        Git(path, "init");
+        Git(path, "config", "user.email", "test@example.com");
+        Git(path, "config", "user.name", "Test User");
+        File.WriteAllText(Path.Combine(path, "hello.txt"), "one");
     }
 
     private static void InitializeTextRepository(string path, string content)

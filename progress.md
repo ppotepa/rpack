@@ -84,7 +84,8 @@ Last updated: 2026-06-15
 - Added a structured `apply --json` path so apply now emits `RpackIssue` codes for plan, patch, pre-action, and post-action failures.
 - Added a structured `rebase --json` path so rebase now emits `RpackIssue` codes and output artifacts through the shared runtime surface.
 - Updated `RpackAppUseCaseTests` to resolve use cases from the shared DI graph instead of constructing stale constructor signatures manually.
-- Current test status: `99/99` passing.
+- Fixed core apply history recording so packages can be applied to Git repositories that do not have an initial `HEAD` commit yet.
+- Current test status: `100/100` passing.
 
 ## What That Means
 
@@ -112,6 +113,7 @@ Last updated: 2026-06-15
 - Core history now emits structured `state.history-invalid` when `.git/rpack/apply-log.json` is malformed.
 - Agent undo now emits structured `state.journal-missing` and `state.backup-missing` codes, plus a structured target-changed undo failure.
 - Core apply now emits structured `state.store-failed` when persisted apply state cannot be written, while preserving rollback behavior and legacy messaging.
+- Core apply now treats unresolved target `HEAD` as optional audit metadata, so successful patch application is not rolled back in unborn Git repositories.
 - Agent undo now supports `--force` for target-changed-after-apply cases and keeps the structured undo failure path for non-forced runs.
 - Agent package root validation now also supports declared-files matching and validation command execution, rejecting mismatches with structured agent issue codes.
 - Agent package root fixture coverage now includes payload base mismatch and already-applied planner states, which strengthens the golden test coverage for phase 12 semantics.
