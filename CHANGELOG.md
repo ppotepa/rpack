@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-06-15
+
+### Added
+
+- Added `Rpack.App` use cases and shared DI registration for CLI and GUI orchestration.
+- Added focused package, patch, action, state, Git adapter, and structured result boundaries.
+- Added `Rpack.AgentPackages` with package-root validation, packing, planning, apply, repair, apply-remaining, and undo flows.
+- Added structured issue/result output for JSON-friendly `check`, `lint`, `apply`, `rebase`, and agent package-root commands.
+- Added docs for architecture, validation, diagnostics, package formats, agent packages, state, actions, LLM authoring, repair flow, and testing.
+- Added fake-project CLI end-to-end coverage, including a five-package incremental scenario.
+
+### Changed
+
+- Routed CLI and GUI package workflows through shared use cases instead of direct domain orchestration.
+- Reduced `RpackPackageService` to a compatibility facade backed by shared core services.
+- Split Git operations into narrower adapter interfaces for repository inspection, patch operations, working tree state, worktree operations, and mutations.
+
+### Fixed
+
+- Fixed action execution for actions without `Path`, including `command` and `rpack.commit` actions.
+
 ## [0.1.17] - 2026-06-07
 
 ### Added

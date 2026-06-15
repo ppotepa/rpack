@@ -1,0 +1,15 @@
+{
+  "Operations": [
+    {
+      "Id": "op-1",
+      "Kind": "ModifyTextFile",
+      "Path": "src/File.txt",
+      "BaseSha256": "cba06b5736faf67e54b07b561eae94395e774c517a7d910a54369e1263ccfbd4",
+      "TargetSha256": "60f78699f250f9efacb300e0760eb2a562954970add621837a37e39e1b70347e",
+      "PayloadPath": "payload/text/modify.txt",
+      "ApplyPolicy": "PayloadIfBaseMatches",
+      "Required": true
+    }
+  ],
+  "Groups": []
+}

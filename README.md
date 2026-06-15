@@ -35,7 +35,7 @@ The result is still simple: after `rpack apply`, you review the working tree and
 
 ## Current Status
 
-This repository is in early MVP stage. The current format is `rpack-v1` and focuses on ordered Git patch packages for working trees.
+This repository is in active MVP/refactor stage. The current stable package format is `rpack-v1` for ordered Git patch packages, with a newer `package-root` flow for agent-generated payload operations.
 
 Implemented:
 
@@ -44,6 +44,7 @@ Implemented:
 - one or more ordered `git diff --binary` patches
 - `create`, `inspect`, `check`, `diagnose`, `lint`, `rebase`, `apply`, `undo`, `history`
 - `open` for guided package application
+- `pack-root`, `validate-package-root`, `plan`, `apply-root`, `apply-remaining-root`, `diagnose-root`, `repair-root`, `undo-root` for agent package-root workflows
 - checksum verification
 - clean working tree requirement by default
 - `git apply --check` before apply
@@ -94,7 +95,7 @@ dotnet pack src/Rpack.Cli -c Release
 Build Windows MSI locally (both variants at once):
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.21
+.\scripts\build-windows-msi.ps1 -Version 0.1.22
 ```
 
 This creates two installers:
@@ -105,8 +106,8 @@ This creates two installers:
 Build only one variant when needed:
 
 ```powershell
-.\scripts\build-windows-msi.ps1 -Version 0.1.21 -Variant framework-dependent
-.\scripts\build-windows-msi.ps1 -Version 0.1.21 -Variant self-contained
+.\scripts\build-windows-msi.ps1 -Version 0.1.22 -Variant framework-dependent
+.\scripts\build-windows-msi.ps1 -Version 0.1.22 -Variant self-contained
 ```
 
 ## Usage
@@ -641,15 +642,28 @@ Test:
 dotnet test
 ```
 
+Important end-to-end test coverage includes:
+
+- a single fake-project CLI flow that creates, inspects, checks, applies, and undoes a package
+- an incremental fake-project CLI flow that creates and applies five sequential feature packages, with each package changing at least three files
+- agent package-root validation, planning, apply, repair, and undo fixtures
+
 Project layout:
 
 ```txt
 src/
+  Rpack.App/
+  Rpack.AgentPackages/
   Rpack.Cli/
   Rpack.Core/
   Rpack.Open/
 tests/
   Rpack.Tests/
+docs/
+  architecture.md
+  testing.md
+  package-format-current.md
+  package-format-agent.md
 ```
 
 ## Roadmap

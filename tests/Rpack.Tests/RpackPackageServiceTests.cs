@@ -1,5 +1,9 @@
+using Microsoft.Extensions.DependencyInjection;
+using System.Text;
 using System.IO.Compression;
+using Rpack.App;
 using Rpack.Core;
+using Rpack.Core.Packages;
 
 namespace Rpack.Tests;
 
@@ -310,6 +314,64 @@ public class RpackPackageServiceTests
     }
 
     [Fact]
+    public void Lint_FailsForActionNetworkRisk()
+    {
+        using var workspace = new TempWorkspace();
+        var packagePath = Path.Combine(workspace.Path, "lint-action.rpack");
+        var patch = """
+            diff --git a/hello.txt b/hello.txt
+            new file mode 100644
+            --- /dev/null
+            +++ b/hello.txt
+            @@ -0,0 +1 @@
+            +hello
+            """;
+        WriteManualPackageWithActions(
+            packagePath,
+            "[{ \"Name\": \"Fetch\", \"Kind\": \"command\", \"Command\": \"Invoke-WebRequest https://example.com\", \"Optional\": false }]",
+            "[]",
+            ("patches/change.patch", patch));
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+
+        var lint = service.Lint(new LintPackageOptions
+        {
+            PackagePath = packagePath
+        });
+
+        Assert.True(lint.Success, lint.Message);
+        Assert.Contains("action.network-risk", lint.Message);
+    }
+
+    [Fact]
+    public void Lint_FailsForActionUntrustedScript()
+    {
+        using var workspace = new TempWorkspace();
+        var packagePath = Path.Combine(workspace.Path, "lint-script.rpack");
+        var patch = """
+            diff --git a/hello.txt b/hello.txt
+            new file mode 100644
+            --- /dev/null
+            +++ b/hello.txt
+            @@ -0,0 +1 @@
+            +hello
+            """;
+        WriteManualPackageWithActions(
+            packagePath,
+            "[{ \"Name\": \"Bootstrap\", \"Kind\": \"command\", \"Command\": \"Invoke-Expression 'echo hi'\", \"Optional\": false }]",
+            "[]",
+            ("patches/change.patch", patch));
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+
+        var lint = service.Lint(new LintPackageOptions
+        {
+            PackagePath = packagePath
+        });
+
+        Assert.True(lint.Success, lint.Message);
+        Assert.Contains("action.untrusted-script", lint.Message);
+    }
+
+    [Fact]
     public void Apply_SkipsAlreadyPresentAddedFileWhenContentMatches()
     {
         using var workspace = new TempWorkspace();
@@ -356,6 +418,51 @@ public class RpackPackageServiceTests
         Assert.True(undo.Success, undo.Message);
         Assert.Equal("one", File.ReadAllText(Path.Combine(target, "hello.txt")));
         Assert.Equal("same content\r\n", File.ReadAllText(Path.Combine(target, "new-file.txt")));
+    }
+
+    [Fact]
+    public void Apply_FailsWhenStateStoreCannotWriteApplyLog()
+    {
+        using var workspace = new TempWorkspace();
+        var source = workspace.CreateDirectory("source");
+        var target = workspace.CreateDirectory("target");
+        InitializeRepository(source);
+        InitializeRepository(target);
+
+        File.WriteAllText(Path.Combine(source, "hello.txt"), "two");
+
+        var packagePath = Path.Combine(workspace.Path, "store-fail.rpack");
+        var service = new RpackPackageService(new GitClient(new ProcessRunner()));
+        var create = service.Create(new CreatePackageOptions
+        {
+            RepositoryPath = source,
+            OutputPath = packagePath,
+            Id = "store-fail",
+            Title = "Store fail"
+        });
+
+        Assert.True(create.Success, create.Message);
+        Directory.CreateDirectory(Path.Combine(target, ".git", "rpack", "apply-log.json"));
+
+        var apply = service.Apply(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.False(apply.Success);
+        Assert.Contains("Failed to store apply log", apply.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("one", File.ReadAllText(Path.Combine(target, "hello.txt")));
+
+        using var provider = new ServiceCollection().AddRpackApp().BuildServiceProvider();
+        var detailed = provider.GetRequiredService<RpackPackageApplyService>().ExecuteDetailed(new ApplyPackageOptions
+        {
+            PackagePath = packagePath,
+            RepositoryPath = target
+        });
+
+        Assert.False(detailed.Success);
+        Assert.Contains(detailed.Issues, issue => issue.Code == "state.store-failed");
     }
 
     [Fact]

@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
     <ProjectReference Include="..\Rpack.Core\Rpack.Core.csproj" />
+    <ProjectReference Include="..\Rpack.App\Rpack.App.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -11,7 +13,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>rpack-open</AssemblyName>
     <RootNamespace>Rpack.Open</RootNamespace>
-    <Version>0.1.21</Version>
+    <Version>0.1.22</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Authors>Pawel Potepa</Authors>
     <Description>Windows file association launcher for rpack packages.</Description>

@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Rpack.AgentPackages/Rpack.AgentPackages.csproj" />
+    <Project Path="src/Rpack.App/Rpack.App.csproj" />
     <Project Path="src/Rpack.Cli/Rpack.Cli.csproj" />
     <Project Path="src/Rpack.Core/Rpack.Core.csproj" />
     <Project Path="src/Rpack.Open/Rpack.Open.csproj" />

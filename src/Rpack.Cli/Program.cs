@@ -1,5 +1,11 @@
 using System.Reflection;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Rpack.AgentPackages;
+using Rpack.App;
 using Rpack.Core;
+using Rpack.Core.Results;
+using Rpack.Cli;
 
 var command = args.FirstOrDefault();
 if (command is "--version" or "-v" or "version")
@@ -14,24 +20,46 @@ if (string.IsNullOrWhiteSpace(command) || command is "-h" or "--help" or "help")
     return 0;
 }
 
-var gitClient = new GitClient(new ProcessRunner());
-var service = new RpackPackageService(gitClient);
+var services = new ServiceCollection().AddRpackApp();
+using var serviceProvider = services.BuildServiceProvider();
+var gitClient = serviceProvider.GetRequiredService<GitClient>();
+var createUseCase = serviceProvider.GetRequiredService<CreatePackageUseCase>();
+var inspectUseCase = serviceProvider.GetRequiredService<InspectPackageUseCase>();
+var checkUseCase = serviceProvider.GetRequiredService<CheckPackageUseCase>();
+var diagnoseUseCase = serviceProvider.GetRequiredService<DiagnosePackageUseCase>();
+var lintUseCase = serviceProvider.GetRequiredService<LintPackageUseCase>();
+var applyUseCase = serviceProvider.GetRequiredService<ApplyPackageUseCase>();
+var rebaseUseCase = serviceProvider.GetRequiredService<RebasePackageUseCase>();
+var undoUseCase = serviceProvider.GetRequiredService<UndoLastApplyUseCase>();
+var historyUseCase = serviceProvider.GetRequiredService<ReadHistoryUseCase>();
+var agentPackageApplier = new AgentPackageApplier();
+var agentConflictReportBuilder = new AgentConflictReportBuilder();
+var agentPackageUndoer = new AgentPackageUndoer();
+var agentRepairPackageGenerator = new AgentRepairPackageGenerator();
 
 try
 {
     return command switch
     {
-        "create" => RunCreate(args.Skip(1).ToArray(), service),
-        "inspect" => RunInspect(args.Skip(1).ToArray(), service),
-        "check" => RunCheck(args.Skip(1).ToArray(), service),
-        "diagnose" => RunDiagnose(args.Skip(1).ToArray(), service),
-        "lint" => RunLint(args.Skip(1).ToArray(), service),
-        "apply" => RunApply(args.Skip(1).ToArray(), service),
-        "rebase" => RunRebase(args.Skip(1).ToArray(), service),
-        "open" => RunOpen(args.Skip(1).ToArray(), service, gitClient),
-        "undo" => RunUndo(args.Skip(1).ToArray(), service),
-        "history" => RunHistory(args.Skip(1).ToArray(), service),
-        _ => Fail($"Unknown command: {command}")
+        "create" => RunCreate(args.Skip(1).ToArray(), createUseCase),
+        "inspect" => RunInspect(args.Skip(1).ToArray(), inspectUseCase),
+        "check" => RunCheck(args.Skip(1).ToArray(), checkUseCase),
+        "diagnose" => RunDiagnose(args.Skip(1).ToArray(), diagnoseUseCase),
+        "lint" => RunLint(args.Skip(1).ToArray(), lintUseCase),
+        "apply" => RunApply(args.Skip(1).ToArray(), applyUseCase),
+        "rebase" => RunRebase(args.Skip(1).ToArray(), rebaseUseCase),
+        "pack-root" => RunPackRoot(args.Skip(1).ToArray()),
+        "validate-package-root" => RunValidatePackageRoot(args.Skip(1).ToArray()),
+        "plan" => RunPlan(args.Skip(1).ToArray()),
+        "apply-root" => RunApplyRoot(args.Skip(1).ToArray(), agentPackageApplier),
+        "apply-remaining-root" => RunApplyRemainingRoot(args.Skip(1).ToArray(), agentPackageApplier),
+        "diagnose-root" => RunDiagnoseRoot(args.Skip(1).ToArray(), agentConflictReportBuilder),
+        "repair-root" => RunRepairRoot(args.Skip(1).ToArray(), agentRepairPackageGenerator),
+        "undo-root" => RunUndoRoot(args.Skip(1).ToArray(), agentPackageUndoer),
+        "open" => RunOpen(args.Skip(1).ToArray(), inspectUseCase, checkUseCase, applyUseCase, gitClient),
+        "undo" => RunUndo(args.Skip(1).ToArray(), undoUseCase),
+        "history" => RunHistory(args.Skip(1).ToArray(), historyUseCase),
+        _ => FailUsage($"Unknown command: {command}")
     };
 }
 catch (Exception ex)
@@ -40,16 +68,16 @@ catch (Exception ex)
     return 1;
 }
 
-static int RunCreate(string[] args, RpackPackageService service)
+static int RunCreate(string[] args, CreatePackageUseCase useCase)
 {
     var options = CliOptions.Parse(args);
     var output = options.Value("-o") ?? options.Value("--output");
     if (string.IsNullOrWhiteSpace(output))
     {
-        return Fail("Missing output path. Use -o package.rpack.");
+        return FailUsage("Missing output path. Use -o package.rpack.");
     }
 
-    var result = service.Create(new CreatePackageOptions
+    var result = useCase.Execute(new CreatePackageOptions
     {
         RepositoryPath = options.Value("--repo") ?? Directory.GetCurrentDirectory(),
         OutputPath = output,
@@ -64,20 +92,26 @@ static int RunCreate(string[] args, RpackPackageService service)
     return PrintResult(result);
 }
 
-static int RunInspect(string[] args, RpackPackageService service)
+static int RunInspect(string[] args, InspectPackageUseCase useCase)
 {
     var options = CliOptions.Parse(args);
     if (options.Positionals.Count < 1)
     {
-        return Fail("Usage: rpack inspect <package.rpack>");
+        return FailUsage("Usage: rpack inspect <package.rpack> [--json]");
     }
 
-    var inspection = service.Inspect(new InspectPackageOptions
+    var inspection = useCase.Execute(new InspectPackageOptions
     {
         PackagePath = options.Positionals[0],
         PathPrefix = options.Value("--path-prefix")
     });
     var diff = inspection.DiffStats;
+
+    if (options.Has("--json"))
+    {
+        Console.WriteLine(CliOutputFormatter.FormatInspectionJson(inspection));
+        return 0;
+    }
 
     Console.WriteLine($"{inspection.Manifest.Title} ({inspection.Manifest.Id})");
     Console.WriteLine($"format: {inspection.Manifest.Format}");
@@ -133,15 +167,15 @@ static int RunInspect(string[] args, RpackPackageService service)
     return 0;
 }
 
-static int RunCheck(string[] args, RpackPackageService service)
+static int RunCheck(string[] args, CheckPackageUseCase useCase)
 {
     var options = CliOptions.Parse(args);
     if (options.Positionals.Count < 1)
     {
-        return Fail("Usage: rpack check <package.rpack> [repo]");
+        return FailUsage("Usage: rpack check <package.rpack> [repo] [--json]");
     }
 
-    var result = service.Check(new CheckPackageOptions
+    var optionsModel = new CheckPackageOptions
     {
         PackagePath = options.Positionals[0],
         RepositoryPath = ResolveRepositoryArgument(options),
@@ -150,26 +184,34 @@ static int RunCheck(string[] args, RpackPackageService service)
         PathPrefix = options.Value("--path-prefix"),
         AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
         IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
-    });
+    };
 
-    return PrintResult(result);
+    if (options.Has("--json"))
+    {
+        var detailed = useCase.ExecuteDetailed(optionsModel);
+        Console.WriteLine(CliOutputFormatter.FormatResultJson("check", detailed));
+        return CliOutputFormatter.MapExitCode(detailed);
+    }
+
+    var result = useCase.Execute(optionsModel);
+    return PrintCommandResult("check", result, false);
 }
 
-static int RunRebase(string[] args, RpackPackageService service)
+static int RunRebase(string[] args, RebasePackageUseCase useCase)
 {
     var options = CliOptions.Parse(args);
     if (options.Positionals.Count < 1)
     {
-        return Fail("Usage: rpack rebase <package.rpack> [repo] -o <package-rebased.rpack>");
+        return FailUsage("Usage: rpack rebase <package.rpack> [repo] -o <package-rebased.rpack> [--json]");
     }
 
     var output = options.Value("-o") ?? options.Value("--output");
     if (string.IsNullOrWhiteSpace(output))
     {
-        return Fail("Missing output path. Use -o package-rebased.rpack.");
+        return FailUsage("Missing output path. Use -o package-rebased.rpack.");
     }
 
-    var result = service.Rebase(new RebasePackageOptions
+    var rebaseOptions = new RebasePackageOptions
     {
         PackagePath = options.Positionals[0],
         RepositoryPath = ResolveRepositoryArgument(options),
@@ -177,20 +219,180 @@ static int RunRebase(string[] args, RpackPackageService service)
         PathPrefix = options.Value("--path-prefix"),
         AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
         IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
-    });
+    };
 
+    if (options.Has("--json"))
+    {
+        var detailed = useCase.ExecuteDetailed(rebaseOptions);
+        Console.WriteLine(CliOutputFormatter.FormatResultJson("rebase", detailed));
+        return CliOutputFormatter.MapExitCode(detailed);
+    }
+
+    var result = useCase.Execute(rebaseOptions);
     return PrintResult(result);
 }
 
-static int RunApply(string[] args, RpackPackageService service)
+static int RunPackRoot(string[] args)
 {
     var options = CliOptions.Parse(args);
     if (options.Positionals.Count < 1)
     {
-        return Fail("Usage: rpack apply <package.rpack> [repo]");
+        return FailUsage("Usage: rpack pack-root <package-root> -o <package.rpack> [--json]");
     }
 
-    var result = service.Apply(new ApplyPackageOptions
+    var output = options.Value("-o") ?? options.Value("--output");
+    if (string.IsNullOrWhiteSpace(output))
+    {
+        return FailUsage("Missing output path. Use -o package.rpack.");
+    }
+
+    var result = new AgentPackageRootPacker().PackDetailed(options.Positionals[0], output);
+    return PrintStructuredCommandResult("pack-root", result, options.Has("--json"));
+}
+
+static int RunValidatePackageRoot(string[] args)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return FailUsage("Usage: rpack validate-package-root <package-root> [--json]");
+    }
+
+    var result = new AgentPackageRootValidator().ValidateDetailed(options.Positionals[0]);
+    return PrintStructuredCommandResult("validate-package-root", result, options.Has("--json"));
+}
+
+static int RunPlan(string[] args)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return FailUsage("Usage: rpack plan <package-root> [repo] [--json]");
+    }
+
+    var targetRepository = options.Positionals.Count > 1 ? options.Positionals[1] : Directory.GetCurrentDirectory();
+    var planBuilder = new AgentApplyPlanBuilder();
+    var plan = planBuilder.BuildPlan(options.Positionals[0], targetRepository);
+    if (options.Has("--json"))
+    {
+        Console.WriteLine(planBuilder.RenderJson(plan));
+    }
+    else
+    {
+        Console.WriteLine(planBuilder.Render(plan));
+    }
+
+    return 0;
+}
+
+static int RunApplyRoot(string[] args, AgentPackageApplier applier)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return FailUsage("Usage: rpack apply-root <package-root> [repo]");
+    }
+
+    var targetRepository = options.Positionals.Count > 1 ? options.Positionals[1] : Directory.GetCurrentDirectory();
+    var result = applier.Apply(options.Positionals[0], targetRepository);
+    return PrintResult(result);
+}
+
+static int RunApplyRemainingRoot(string[] args, AgentPackageApplier applier)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return FailUsage("Usage: rpack apply-remaining-root <package-root> [repo]");
+    }
+
+    var targetRepository = options.Positionals.Count > 1 ? options.Positionals[1] : Directory.GetCurrentDirectory();
+    var result = applier.ApplyRemaining(options.Positionals[0], targetRepository);
+    return PrintResult(result);
+}
+
+static int RunDiagnoseRoot(string[] args, AgentConflictReportBuilder reportBuilder)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return FailUsage("Usage: rpack diagnose-root <package-root> [repo] [--json] [--llm] [--conflicts]");
+    }
+
+    var targetRepository = options.Positionals.Count > 1 ? options.Positionals[1] : Directory.GetCurrentDirectory();
+    var plan = new AgentApplyPlanBuilder().BuildPlan(options.Positionals[0], targetRepository);
+    if (!plan.Success)
+    {
+        return Fail(plan.ErrorMessage);
+    }
+
+    if (options.Has("--json"))
+    {
+        Console.WriteLine(reportBuilder.RenderJson(plan, options.Positionals[0], targetRepository));
+    }
+    else if (options.Has("--llm") || options.Has("--conflicts"))
+    {
+        Console.WriteLine(reportBuilder.RenderLlm(plan, options.Positionals[0], targetRepository));
+    }
+    else
+    {
+        Console.WriteLine(reportBuilder.RenderText(plan, options.Positionals[0], targetRepository));
+    }
+
+    return 0;
+}
+
+static int RunRepairRoot(string[] args, AgentRepairPackageGenerator generator)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return FailUsage("Usage: rpack repair-root <package-root> [repo] -o <repair-root> [--json]");
+    }
+
+    var output = options.Value("-o") ?? options.Value("--output");
+    if (string.IsNullOrWhiteSpace(output))
+    {
+        return FailUsage("Missing output path. Use -o repair-root.");
+    }
+
+    var targetRepository = options.Positionals.Count > 1 ? options.Positionals[1] : Directory.GetCurrentDirectory();
+    var result = generator.Generate(options.Positionals[0], targetRepository, output);
+    if (options.Has("--json"))
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            success = result.Success,
+            outputPath = output,
+            message = result.Message
+        }, new JsonSerializerOptions { WriteIndented = true }));
+        return result.Success ? 0 : 1;
+    }
+
+    return PrintResult(result);
+}
+
+static int RunUndoRoot(string[] args, AgentPackageUndoer undoer)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return FailUsage("Usage: rpack undo-root <repo> [--force]");
+    }
+
+    var result = undoer.Undo(options.Positionals[0], options.Has("--force"));
+    return PrintResult(result);
+}
+
+static int RunApply(string[] args, ApplyPackageUseCase useCase)
+{
+    var options = CliOptions.Parse(args);
+    if (options.Positionals.Count < 1)
+    {
+        return FailUsage("Usage: rpack apply <package.rpack> [repo] [--json]");
+    }
+
+    var applyOptions = new ApplyPackageOptions
     {
         PackagePath = options.Positionals[0],
         RepositoryPath = ResolveRepositoryArgument(options),
@@ -200,20 +402,28 @@ static int RunApply(string[] args, RpackPackageService service)
         AddedFileConflictResolution = ResolveAddedFileConflictResolution(options),
         IgnoreSpaceChange = ResolveIgnoreSpaceChange(options),
         SkipActions = options.Has("--no-actions")
-    });
+    };
 
-    return PrintResult(result);
+    if (options.Has("--json"))
+    {
+        var detailed = useCase.ExecuteDetailed(applyOptions);
+        Console.WriteLine(CliOutputFormatter.FormatResultJson("apply", detailed));
+        return CliOutputFormatter.MapExitCode(detailed);
+    }
+
+    var result = useCase.Execute(applyOptions);
+    return PrintCommandResult("apply", result, false);
 }
 
-static int RunDiagnose(string[] args, RpackPackageService service)
+static int RunDiagnose(string[] args, DiagnosePackageUseCase useCase)
 {
     var options = CliOptions.Parse(args);
     if (options.Positionals.Count < 1)
     {
-        return Fail("Usage: rpack diagnose <package.rpack> [repo]");
+        return FailUsage("Usage: rpack diagnose <package.rpack> [repo] [--json] [--llm] [--conflicts]");
     }
 
-    var result = service.Diagnose(new DiagnosePackageOptions
+    var result = useCase.Execute(new DiagnosePackageOptions
     {
         PackagePath = options.Positionals[0],
         RepositoryPath = ResolveRepositoryArgument(options),
@@ -224,43 +434,68 @@ static int RunDiagnose(string[] args, RpackPackageService service)
         IgnoreSpaceChange = ResolveIgnoreSpaceChange(options)
     });
 
+    if (options.Has("--json"))
+    {
+        Console.WriteLine(CliOutputFormatter.FormatResultJson("diagnose", result));
+        return CliOutputFormatter.MapExitCode(result);
+    }
+
+    if (options.Has("--llm") || options.Has("--conflicts"))
+    {
+        Console.WriteLine(CliOutputFormatter.FormatDiagnoseLlmReport(options.Positionals[0], ResolveRepositoryArgument(options), result));
+        return CliOutputFormatter.MapExitCode(result);
+    }
+
     return PrintResult(result);
 }
 
-static int RunLint(string[] args, RpackPackageService service)
+static int RunLint(string[] args, LintPackageUseCase useCase)
 {
     var options = CliOptions.Parse(args);
     if (options.Positionals.Count < 1)
     {
-        return Fail("Usage: rpack lint <package.rpack>");
+        return FailUsage("Usage: rpack lint <package.rpack> [--json]");
     }
 
-    var result = service.Lint(new LintPackageOptions
+    var lintOptions = new LintPackageOptions
     {
         PackagePath = options.Positionals[0],
         PathPrefix = options.Value("--path-prefix")
-    });
+    };
 
-    return PrintResult(result);
+    if (options.Has("--json"))
+    {
+        var detailed = useCase.ExecuteDetailed(lintOptions);
+        Console.WriteLine(CliOutputFormatter.FormatResultJson("lint", detailed));
+        return CliOutputFormatter.MapExitCode(detailed);
+    }
+
+    var result = useCase.Execute(lintOptions);
+    return PrintCommandResult("lint", result, false);
 }
 
-static int RunOpen(string[] args, RpackPackageService service, GitClient gitClient)
+static int RunOpen(
+    string[] args,
+    InspectPackageUseCase inspectUseCase,
+    CheckPackageUseCase checkUseCase,
+    ApplyPackageUseCase applyUseCase,
+    GitClient gitClient)
 {
     var options = CliOptions.Parse(args);
     if (options.Positionals.Count < 1)
     {
-        return Fail("Usage: rpack open <package.rpack> [repo]");
+        return FailUsage("Usage: rpack open <package.rpack> [repo]");
     }
 
     var packagePath = Path.GetFullPath(options.Positionals[0]);
-    var repositoryPath = ResolveOpenRepositoryArgument(options, gitClient, packagePath);
+    var repositoryPath = ResolveOpenRepositoryArgument(options, gitClient, packagePath, inspectUseCase);
     var allowDirty = options.Has("--allow-dirty");
     var strictBase = options.Has("--strict-base");
     var pathPrefix = options.Value("--path-prefix");
     var ignoreSpaceChange = ResolveIgnoreSpaceChange(options);
     var allowedDirtyPaths = GetPackageDirtyException(repositoryPath, packagePath);
 
-    var inspection = service.Inspect(new InspectPackageOptions
+    var inspection = inspectUseCase.Execute(new InspectPackageOptions
     {
         PackagePath = packagePath,
         PathPrefix = pathPrefix
@@ -268,7 +503,7 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
 
     PrintOpenSummary(inspection, repositoryPath, allowDirty, ignoreSpaceChange, pathPrefix);
 
-    var check = service.Check(new CheckPackageOptions
+    var check = checkUseCase.Execute(new CheckPackageOptions
     {
         PackagePath = packagePath,
         RepositoryPath = repositoryPath,
@@ -291,7 +526,7 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
         return 0;
     }
 
-    var apply = service.Apply(new ApplyPackageOptions
+    var apply = applyUseCase.Execute(new ApplyPackageOptions
     {
         PackagePath = packagePath,
         RepositoryPath = repositoryPath,
@@ -304,23 +539,23 @@ static int RunOpen(string[] args, RpackPackageService service, GitClient gitClie
         SkipActions = options.Has("--no-actions")
     });
 
-    return PrintResult(apply);
+    return PrintCommandResult("open", apply, options.Has("--json"));
 }
 
-static int RunUndo(string[] args, RpackPackageService service)
+static int RunUndo(string[] args, UndoLastApplyUseCase useCase)
 {
     var options = CliOptions.Parse(args);
-    var result = service.UndoLastApply(
+    var result = useCase.Execute(
         ResolveRepositoryArgument(options, positionalOffset: 0),
         options.Has("--allow-dirty"));
 
-    return PrintResult(result);
+    return PrintCommandResult("undo", result, false);
 }
 
-static int RunHistory(string[] args, RpackPackageService service)
+static int RunHistory(string[] args, ReadHistoryUseCase useCase)
 {
     var options = CliOptions.Parse(args);
-    var logs = service.ReadHistory(ResolveRepositoryArgument(options, positionalOffset: 0));
+    var logs = useCase.Execute(ResolveRepositoryArgument(options, positionalOffset: 0));
     if (logs.Count == 0)
     {
         Console.WriteLine("No rpack history.");
@@ -347,7 +582,7 @@ static string ResolveRepositoryArgument(CliOptions options, int positionalOffset
         ?? (options.Positionals.Count > positionalOffset ? options.Positionals[positionalOffset] : Directory.GetCurrentDirectory());
 }
 
-static string ResolveOpenRepositoryArgument(CliOptions options, GitClient gitClient, string packagePath)
+static string ResolveOpenRepositoryArgument(CliOptions options, GitClient gitClient, string packagePath, InspectPackageUseCase inspectUseCase)
 {
     var explicitRepository = options.Value("--repo")
         ?? (options.Positionals.Count > 1 ? options.Positionals[1] : null);
@@ -356,7 +591,7 @@ static string ResolveOpenRepositoryArgument(CliOptions options, GitClient gitCli
         return explicitRepository;
     }
 
-    var packageRepositoryHint = TryGetProjectPathFromPackage(packagePath, gitClient);
+    var packageRepositoryHint = TryGetProjectPathFromPackage(packagePath, gitClient, inspectUseCase);
     if (!string.IsNullOrWhiteSpace(packageRepositoryHint))
     {
         return packageRepositoryHint;
@@ -377,11 +612,14 @@ static string ResolveOpenRepositoryArgument(CliOptions options, GitClient gitCli
     throw new InvalidOperationException("Could not find a Git repository from the package location or current directory. Use --repo <repo>.");
 }
 
-static string? TryGetProjectPathFromPackage(string packagePath, GitClient gitClient)
+static string? TryGetProjectPathFromPackage(string packagePath, GitClient gitClient, InspectPackageUseCase inspectUseCase)
 {
     try
     {
-        var inspection = new RpackPackageService(gitClient).Inspect(packagePath);
+        var inspection = inspectUseCase.Execute(new InspectPackageOptions
+        {
+            PackagePath = packagePath
+        });
         var projectPath = inspection.Manifest.Source?.ProjectPath;
         if (string.IsNullOrWhiteSpace(projectPath))
         {
@@ -486,7 +724,37 @@ static int PrintResult(RpackResult result)
 {
     var output = result.Success ? Console.Out : Console.Error;
     output.WriteLine(result.Message);
-    return result.Success ? 0 : 1;
+    return CliOutputFormatter.MapExitCode(result);
+}
+
+static int PrintCommandResult(string command, RpackResult result, bool asJson)
+{
+    if (asJson)
+    {
+        Console.WriteLine(CliOutputFormatter.FormatResultJson(command, result));
+        return CliOutputFormatter.MapExitCode(result);
+    }
+
+    return PrintResult(result);
+}
+
+static int PrintStructuredCommandResult(string command, RpackOperationResult result, bool asJson)
+{
+    if (asJson)
+    {
+        Console.WriteLine(CliOutputFormatter.FormatResultJson(command, result));
+        return CliOutputFormatter.MapExitCode(result);
+    }
+
+    var output = result.Success ? Console.Out : Console.Error;
+    output.WriteLine(result.Summary);
+    return CliOutputFormatter.MapExitCode(result);
+}
+
+static int FailUsage(string message)
+{
+    Console.Error.WriteLine(message);
+    return 2;
 }
 
 static int Fail(string message)
@@ -504,12 +772,19 @@ static void PrintHelp()
       rpack create -o <package.rpack> [--repo <repo>]
       rpack create --staged -o <package.rpack> [--repo <repo>]
       rpack create --from <rev> --to <rev> -o <package.rpack> [--repo <repo>]
-      rpack inspect <package.rpack> [--path-prefix <prefix>]
-      rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
-      rpack diagnose <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict]
+      rpack inspect <package.rpack> [--path-prefix <prefix>] [--json]
+      rpack check <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--json]
+      rpack diagnose <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--json] [--llm] [--conflicts]
       rpack rebase <package.rpack> [repo] -o <package-rebased.rpack> [--path-prefix <prefix>] [--strict]
-      rpack lint <package.rpack> [--path-prefix <prefix>]
-      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--no-actions] [--resolve-added-file-conflicts <mode>] [--allow-existing-added-files <mode>]
+      rpack lint <package.rpack> [--path-prefix <prefix>] [--json]
+      rpack apply <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--no-actions] [--resolve-added-file-conflicts <mode>] [--allow-existing-added-files <mode>] [--json]
+      rpack apply-root <package-root> [repo]
+      rpack apply-remaining-root <package-root> [repo]
+      rpack diagnose-root <package-root> [repo] [--json] [--llm] [--conflicts]
+      rpack repair-root <package-root> [repo] -o <repair-root> [--json]
+      rpack pack-root <package-root> -o <package.rpack> [--json]
+      rpack validate-package-root <package-root> [--json]
+      rpack undo-root <repo> [--force]
       rpack open <package.rpack> [repo] [--allow-dirty] [--strict-base] [--path-prefix <prefix>] [--strict] [--no-actions] [--yes]
       rpack undo [repo] [--allow-dirty]
       rpack history [repo]

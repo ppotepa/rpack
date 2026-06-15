@@ -1,6 +1,6 @@
 namespace Rpack.Core;
 
-public sealed class GitClient
+public sealed class GitClient : IGitRepositoryInspector, IGitWorkingTreeStatus, IGitPatchOperations, IGitWorktreeOperations, IGitMutationOperations
 {
     private readonly ProcessRunner _processRunner;
 

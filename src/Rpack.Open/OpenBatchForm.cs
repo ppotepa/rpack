@@ -1,6 +1,8 @@
 using System.Drawing;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using System.Windows.Forms;
+using Rpack.App;
 using Rpack.Core;
 
 namespace Rpack.Open;
@@ -9,7 +11,9 @@ internal sealed class OpenBatchForm : Form
 {
     private readonly ProcessRunner _processRunner;
     private readonly GitClient _gitClient;
-    private readonly RpackPackageService _service;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly PackageJobRunner _jobRunner;
+    private readonly GuiResultMapper _resultMapper;
     private readonly List<PackageJob> _jobs = [];
     private readonly ListView _list = new();
     private readonly TabControl _statusTabs = new();
@@ -31,7 +35,15 @@ internal sealed class OpenBatchForm : Form
     {
         _processRunner = new ProcessRunner(AppendProcessLog);
         _gitClient = new GitClient(_processRunner);
-        _service = new RpackPackageService(_gitClient);
+        var services = new ServiceCollection().AddRpackApp();
+        services.AddSingleton(_processRunner);
+        services.AddSingleton(_gitClient);
+        _serviceProvider = services.BuildServiceProvider();
+        _jobRunner = new PackageJobRunner(
+            _serviceProvider.GetRequiredService<InspectPackageUseCase>(),
+            _serviceProvider.GetRequiredService<CheckPackageUseCase>(),
+            _serviceProvider.GetRequiredService<ApplyPackageUseCase>());
+        _resultMapper = new GuiResultMapper();
         Text = "rpack packages";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(980, 620);
@@ -45,6 +57,16 @@ internal sealed class OpenBatchForm : Form
             _checkTimer.Stop();
             _ = CheckPendingAsync();
         };
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            (_serviceProvider as IDisposable)?.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 
     public void AddRequest(OpenRequest request)
@@ -313,7 +335,7 @@ internal sealed class OpenBatchForm : Form
             {
                 job.Fail(
                     "ResolveRepository",
-                    new PackageProblem(
+                    new GuiIssueViewModel(
                         "Repository not found",
                         "rpack could not find a Git repository for this package.",
                         "Place the package inside the target repo or open with --repo <repo>.",
@@ -323,26 +345,20 @@ internal sealed class OpenBatchForm : Form
 
             job.RepositoryPath = repositoryPath;
             var allowedDirtyPaths = GetPackageDirtyException(repositoryPath, job.PackagePath);
-            var inspection = _service.Inspect(new InspectPackageOptions
-            {
-                PackagePath = job.PackagePath,
-                PathPrefix = job.PathPrefix
-            });
-            var check = _service.Check(new CheckPackageOptions
-            {
-                PackagePath = job.PackagePath,
-                RepositoryPath = repositoryPath,
-                AllowDirty = job.AllowDirty,
-                StrictBase = job.StrictBase,
-                PathPrefix = job.PathPrefix,
-                AllowedDirtyPaths = allowedDirtyPaths,
-                IgnoreSpaceChange = job.IgnoreSpaceChange
-            });
+            var inspection = _jobRunner.Inspect(job.PackagePath, job.PathPrefix);
+            var check = _jobRunner.Check(
+                job.PackagePath,
+                repositoryPath,
+                job.AllowDirty,
+                job.StrictBase,
+                job.PathPrefix,
+                allowedDirtyPaths,
+                job.IgnoreSpaceChange);
 
             job.Inspection = inspection;
             if (!check.Success)
             {
-                job.Fail("Check", ErrorFormatter.FromCheckFailure(check.Message, job.AllowDirty, job.IgnoreSpaceChange));
+                job.Fail("Check", _resultMapper.FromCheckFailure(check.Message, job.AllowDirty, job.IgnoreSpaceChange));
                 return;
             }
 
@@ -354,7 +370,7 @@ internal sealed class OpenBatchForm : Form
         }
         catch (Exception ex)
         {
-            job.Fail("Inspect", ErrorFormatter.SummarizeException(ex));
+            job.Fail("Inspect", _resultMapper.FromException(ex));
         }
     }
 
@@ -402,7 +418,7 @@ internal sealed class OpenBatchForm : Form
             {
                 job.Fail(
                     "Apply",
-                    new PackageProblem(
+                    new GuiIssueViewModel(
                         "Package inspection missing",
                         "Manifest could not be read before apply.",
                         "Recheck the package.",
@@ -472,28 +488,26 @@ internal sealed class OpenBatchForm : Form
             {
                 job.Fail(
                     "Apply",
-                    new PackageProblem("Repository missing", "The package has no resolved target repository.", "Recheck the package.", "RepositoryPath is empty."));
+                    new GuiIssueViewModel("Repository missing", "The package has no resolved target repository.", "Recheck the package.", "RepositoryPath is empty."));
                 return;
             }
 
-            var apply = _service.Apply(new ApplyPackageOptions
-            {
-                PackagePath = job.PackagePath,
-                RepositoryPath = job.RepositoryPath,
-                AllowDirty = job.AllowDirty,
-                StrictBase = job.StrictBase,
-                PathPrefix = job.PathPrefix,
-                AllowedDirtyPaths = GetPackageDirtyException(job.RepositoryPath, job.PackagePath),
-                IgnoreSpaceChange = job.IgnoreSpaceChange,
-                SkipActions = job.NoActions,
-                SelectedPreActions = job.NoActions ? null : job.SelectedPreActionIndexes,
-                SelectedPostActions = job.NoActions ? null : job.SelectedPostActionIndexes,
-                OnActionExecuted = result => AppendActionLog(result)
-            });
+            var apply = _jobRunner.Apply(
+                job.PackagePath,
+                job.RepositoryPath,
+                job.AllowDirty,
+                job.StrictBase,
+                job.PathPrefix,
+                GetPackageDirtyException(job.RepositoryPath, job.PackagePath),
+                job.IgnoreSpaceChange,
+                job.NoActions,
+                job.NoActions ? null : job.SelectedPreActionIndexes,
+                job.NoActions ? null : job.SelectedPostActionIndexes,
+                result => AppendActionLog(result));
 
             if (!apply.Success)
             {
-                job.Fail("Apply", ErrorFormatter.FromCheckFailure(apply.Message, job.AllowDirty, job.IgnoreSpaceChange));
+                job.Fail("Apply", _resultMapper.FromCheckFailure(apply.Message, job.AllowDirty, job.IgnoreSpaceChange));
                 return;
             }
 
@@ -503,7 +517,7 @@ internal sealed class OpenBatchForm : Form
         }
         catch (Exception ex)
         {
-            job.Fail("Apply", ErrorFormatter.SummarizeException(ex));
+            job.Fail("Apply", _resultMapper.FromException(ex));
         }
     }
 
@@ -527,7 +541,7 @@ internal sealed class OpenBatchForm : Form
     {
         try
         {
-            var inspection = _service.Inspect(packagePath);
+            var inspection = _jobRunner.Inspect(packagePath, null);
             var projectPath = inspection.Manifest.Source?.ProjectPath;
             if (string.IsNullOrWhiteSpace(projectPath))
             {
@@ -970,7 +984,7 @@ internal sealed class OpenBatchForm : Form
             """;
     }
 
-    private static string BuildErrorDetails(PackageJob job, string stage, PackageProblem problem)
+    private static string BuildErrorDetails(PackageJob job, string stage, GuiIssueViewModel problem)
     {
         return $"""
             Stage: {stage}
@@ -1119,7 +1133,7 @@ internal sealed class OpenBatchForm : Form
             Inspection = null;
         }
 
-        public void Fail(string stage, PackageProblem problem)
+        public void Fail(string stage, GuiIssueViewModel problem)
         {
             State = PackageState.Error;
             Message = problem.Title;

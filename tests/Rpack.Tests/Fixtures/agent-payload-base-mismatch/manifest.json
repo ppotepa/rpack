@@ -1,0 +1,10 @@
+{
+  "Format": "rpack-agent-package",
+  "SchemaVersion": "1.0",
+  "Id": "agent-payload-base-mismatch",
+  "Title": "Agent payload base mismatch fixture",
+  "CreatedAtUtc": "2026-06-14T00:00:00Z",
+  "OperationsPath": "operations.json",
+  "DefaultApplyStrategy": "ApplyReadyAndFallbacks",
+  "RequiredCapabilities": ["operations", "payload-store", "journal"]
+}

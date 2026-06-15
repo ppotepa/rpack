@@ -1,0 +1,14 @@
+{
+  "Operations": [
+    {
+      "Id": "op-1",
+      "Kind": "AddTextFile",
+      "Path": "src/Secret.txt",
+      "TargetSha256": "629f54d51fa239eecca3a16bdbc867c57bb15363cd939be7bd3f546077bab2a4",
+      "PayloadPath": "payload/text/secret.txt",
+      "ApplyPolicy": "PayloadIfBaseMatches",
+      "Required": true
+    }
+  ],
+  "Groups": []
+}

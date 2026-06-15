@@ -1,0 +1,14 @@
+{
+  "Operations": [
+    {
+      "Id": "op-1",
+      "Kind": "AddTextFile",
+      "Path": "src/Generated.txt",
+      "TargetSha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+      "PayloadPath": "payload/text/generated.txt",
+      "ApplyPolicy": "PayloadIfBaseMatches",
+      "Required": true
+    }
+  ],
+  "Groups": []
+}
