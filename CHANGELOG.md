@@ -4,10 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-06-15
+
 ### Added
 
 - Added `install.sh` for Linux CLI installs via `curl -fsSL https://raw.githubusercontent.com/ppotepa/rpack/main/install.sh | bash`.
 - Added Linux PATH integration, `rpack-open`, optional `.rpack` file association through `xdg-mime`, and executable `.rpack` support through `binfmt_misc`.
+
+### Fixed
+
+- Fixed apply history recording for Git repositories without an initial `HEAD` commit.
 
 ## [0.1.22] - 2026-06-15
 

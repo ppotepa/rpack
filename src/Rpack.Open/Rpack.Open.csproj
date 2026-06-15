@@ -13,7 +13,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>rpack-open</AssemblyName>
     <RootNamespace>Rpack.Open</RootNamespace>
-    <Version>0.1.22</Version>
+    <Version>0.1.23</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Authors>Pawel Potepa</Authors>
     <Description>Windows file association launcher for rpack packages.</Description>
