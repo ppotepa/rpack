@@ -56,7 +56,7 @@ Last updated: 2026-06-15
 - Added `PackageJobRunner`, `GuiResultMapper`, and `GuiIssueViewModel`, and routed `OpenBatchForm` check/apply orchestration through shared `Rpack.App` use cases.
 - Added docs for architecture, package formats, validation, diagnostics, agent packages, state, actions, LLM authoring, and repair flow.
 - Updated top-level docs after the fake-project E2E scenarios: README now reflects the current project layout and agent package commands, and `docs/testing.md` documents the single-package and five-package CLI scenarios.
-- Added `install.sh` and README instructions for one-command Linux CLI install/update via `curl ... | bash`.
+- Added `install.sh` and README instructions for one-command Linux CLI install/update via `curl ... | bash`, including PATH integration, `rpack-open`, optional `.rpack` desktop association through `xdg-mime`, and executable `.rpack` support through `binfmt_misc`.
 - Added fixtures-backed golden tests for agent package-root flows and current `rpack-v1` package creation/inspection.
 - Added a fake-project end-to-end CLI scenario that creates, inspects, applies, and undoes a package on a synthetic repository.
 - Added an incremental fake-project end-to-end CLI scenario that creates and applies five sequential feature packages, each changing at least three files.

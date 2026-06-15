@@ -81,8 +81,40 @@ curl -fsSL https://raw.githubusercontent.com/ppotepa/rpack/main/install.sh | bas
 ```
 
 The script clones or updates `https://github.com/ppotepa/rpack.git`, installs a
-user-local .NET SDK 10 if needed, publishes `src/Rpack.Cli`, and writes
-`~/.local/bin/rpack`. It does not install the Windows `rpack-open` GUI.
+user-local .NET SDK 10 if needed, publishes `src/Rpack.Cli`, writes
+`~/.local/bin/rpack`, and adds that directory to common shell startup files.
+It also creates `~/.local/bin/rpack-open`, adds desktop/file-manager `.rpack`
+association through `xdg-mime` when available, and attempts to register
+executable `.rpack` files through Linux `binfmt_misc`.
+
+Linux file association uses the terminal `rpack open` flow. It inspects and
+checks the package, then asks before applying. A native Linux GUI is not shipped
+yet.
+
+After install, these forms are supported on Linux:
+
+```bash
+rpack open package.rpack /path/to/repo --allow-dirty --yes
+xdg-open package.rpack
+chmod +x package.rpack
+./package.rpack /path/to/repo --allow-dirty --yes
+```
+
+When running from the target repository root, the repository argument can be
+omitted:
+
+```bash
+cd /path/to/repo
+./package.rpack --allow-dirty --yes
+```
+
+The executable `.rpack` association needs `sudo` because it writes
+`/usr/local/bin/rpack-exec`, `/etc/binfmt.d/rpack.conf`, and the runtime
+`binfmt_misc` registration. Disable that part when needed:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ppotepa/rpack/main/install.sh | RPACK_INSTALL_BINFMT=0 bash
+```
 
 You can also build from source:
 
