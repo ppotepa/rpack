@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added `install.sh` for Linux CLI installs via `curl -fsSL https://raw.githubusercontent.com/ppotepa/rpack/main/install.sh | bash`.
+
 ## [0.1.22] - 2026-06-15
 
 ### Added

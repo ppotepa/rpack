@@ -74,6 +74,16 @@ The MSI installs `rpack.exe`, `rpack-open.exe`, associates `.rpack` files with
 rpack, and adds the installation directory to `PATH`.
 Open a new terminal after installation if `rpack` is not immediately found.
 
+Install or update the CLI on Linux with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ppotepa/rpack/main/install.sh | bash
+```
+
+The script clones or updates `https://github.com/ppotepa/rpack.git`, installs a
+user-local .NET SDK 10 if needed, publishes `src/Rpack.Cli`, and writes
+`~/.local/bin/rpack`. It does not install the Windows `rpack-open` GUI.
+
 You can also build from source:
 
 ```bash
